@@ -1,0 +1,304 @@
+import { monthlyEntries, groupExpenses } from './expense-utils.js';
+import { createEvent, removeTraveler, addTraveler, visibleEvents } from './event-actions.js';
+// Firebase web configuration. These identify the project; database rules control access.
+import { firebaseConfig } from './firebase-config.js';
+
+const $ = (selector) => document.querySelector(selector);
+let toastTimer;
+const status = (message = '', kind = 'success') => {
+  clearTimeout(toastTimer);
+  const toast = $('#status');
+  toast.replaceChildren();
+  if (!$('#auth-panel').hidden) $('#auth-status').textContent = message;
+  if (!message) { if (toast.matches(':popover-open')) toast.hidePopover(); return; }
+  toast.dataset.kind = kind;
+  toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  toast.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
+  const text = document.createElement('span'); text.textContent = message;
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'quiet'; close.textContent = 'Dismiss'; close.onclick = () => status();
+  toast.append(text, close);
+  if (toast.showPopover) toast.showPopover();
+  if (kind === 'error') { toast.tabIndex = -1; toast.focus({ preventScroll: true }); }
+  else toastTimer = setTimeout(() => status(), 6500);
+};
+const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let user, db, auth, api, selectedId, eventData;
+let stopIndex = () => {}, stopEvent = () => {};
+let eventListeners = [];
+let eventTab = "active", eventCache = {}, personalMonth = localDate().slice(0,7);
+function localDate() { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
+function isArchived(data) { const cutoff = new Date(data.createdAt); const day = cutoff.getDate(); cutoff.setDate(1); cutoff.setMonth(cutoff.getMonth()+3); const end = new Date(cutoff.getFullYear(), cutoff.getMonth()+1, 0).getDate(); cutoff.setDate(Math.min(day,end)); return data.type !== "personal" && Date.now() >= cutoff.getTime(); }
+function renderEventList() {
+  $("#event-list").replaceChildren();
+  visibleEvents(eventCache, user?.uid, eventTab).filter(([,d]) => eventTab === "personal" || isArchived(d) === (eventTab === "archived")).forEach(([id,d]) => {
+    const b = document.createElement("button"); b.textContent = d.name; b.dataset.id = id; b.setAttribute("aria-pressed", String(id === selectedId)); b.onclick = () => selectEvent(id); $("#event-list").append(b);
+  });
+  if (!$("#event-list").children.length) $("#event-list").textContent = "No " + (eventTab === "active" ? "shared" : eventTab) + " events.";
+}
+["active", "archived", "personal"].forEach(tab => $("#"+tab+"-events").onclick = () => { eventTab = tab; ["active", "archived", "personal"].forEach(t => $("#"+t+"-events").setAttribute("aria-pressed", String(t === tab))); renderEventList(); });
+setInterval(() => { renderEventList(); }, 60000);
+const money = (cents) => new Intl.NumberFormat(undefined, { style: 'currency', currency: eventData.currency }).format(cents / 100);
+async function perform(form, action) {
+  const buttons = [...form.querySelectorAll('button')];
+  const disabled = buttons.map(button => button.disabled);
+  buttons.forEach((b) => b.disabled = true);
+  status();
+  try { await action(); } catch (error) { status(error.message || 'Something went wrong. Please try again.', 'error'); }
+  finally { buttons.forEach((b, index) => b.disabled = disabled[index]); }
+}
+
+async function initialize() {
+  if (!firebaseConfig.apiKey || !firebaseConfig.databaseURL) {
+    status('Setup needed: add your Firebase configuration in index.js, enable Email/Password Authentication, and deploy database.rules.json.');
+    $('#auth-form').querySelectorAll('button').forEach((b) => b.disabled = true);
+    return;
+  }
+  const base = 'https://www.gstatic.com/firebasejs/12.6.0/';
+  const [appModule, authModule, databaseModule] = await Promise.all([
+    import(`${base}firebase-app.js`), import(`${base}firebase-auth.js`), import(`${base}firebase-database.js`)
+  ]);
+  api = { ...authModule, ...databaseModule };
+  const app = appModule.initializeApp(firebaseConfig);
+  auth = api.getAuth(app); db = api.getDatabase(app);
+  clearTimeout(window.authLoadingTimer);
+  $('#google-signin').disabled = false;
+  $('#google-signin').textContent = 'Sign in with Google';
+  status();
+  api.onAuthStateChanged(auth, (nextUser) => {
+    stopIndex(); stopEvent(); eventListeners.forEach((off) => off()); eventListeners = [];
+    selectedId = null; eventData = null; eventCache = {}; user = nextUser;
+    $(".account-id").hidden = false;
+    $('#auth-panel').hidden = !!user; $('#app').hidden = !user; $('#account').hidden = !user;
+    $('#event-list').replaceChildren();
+    $('#event-detail').innerHTML = '<div class="empty"><h2>Select an event to get started</h2><p>Create your first event or ask an organizer to add you.</p></div>';
+    if (!user) return;
+    $('#identity').textContent = user.email;
+    $('#uid').textContent = user.uid;
+    stopIndex = api.onValue(api.ref(db, `userEvents/${user.uid}`), (snapshot) => {
+      eventListeners.forEach((off) => off()); eventListeners = [];
+      $('#event-list').replaceChildren();
+      const ids = Object.keys(snapshot.val() || {});
+      if (!ids.length) $('#event-list').textContent = 'No events yet.';
+      eventCache = {}; renderEventList();
+      ids.forEach((id) => {
+        eventListeners.push(api.onValue(api.ref(db, `events/${id}`), (s) => {
+          if (s.exists()) eventCache[id] = s.val(); else delete eventCache[id];
+          renderEventList();
+        }, (error) => { delete eventCache[id]; renderEventList(); status(error.message, 'error'); }));
+      });
+    }, (error) => status(error.message, 'error'));
+  });
+}
+
+$('#google-signin').onclick = () => perform($('#auth-form'), async () => {
+  if (!auth) throw new Error('Firebase is still loading. Please try again shortly.');
+  const provider = new api.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  $('#google-signin').textContent = 'Opening Google…';
+  status('Finish signing in in the Google popup. If it does not appear, check whether your browser blocked it.');
+  try {
+    await api.signInWithPopup(auth, provider);
+    $('#password').value = '';
+    status();
+  } catch (error) {
+    const messages = {
+      'auth/operation-not-allowed': 'Enable Google under Firebase Authentication → Sign-in method.',
+      'auth/unauthorized-domain': 'Add this website’s domain under Firebase Authentication → Settings → Authorized domains. For local testing, add localhost.',
+      'auth/popup-blocked': 'Allow popups for this website, then try Google sign-in again.',
+      'auth/popup-closed-by-user': 'Google sign-in was cancelled. You can try again.',
+      'auth/account-exists-with-different-credential': 'This email already uses another sign-in method. Please sign in using that method.',
+      'auth/network-request-failed': 'Could not connect to Google sign-in. Check your internet connection and try again.'
+    };
+    throw new Error(messages[error.code] || error.message);
+  } finally {
+    $('#google-signin').textContent = 'Sign in with Google';
+  }
+});
+
+$('#auth-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const action = event.submitter.value;
+  perform(event.currentTarget, async () => {
+    if (!auth) throw new Error('Firebase is still loading. Please try again shortly.');
+    const email = $('#email').value.trim(); const password = $('#password').value;
+    if (action === 'register') await api.createUserWithEmailAndPassword(auth, email, password);
+    else await api.signInWithEmailAndPassword(auth, email, password);
+    $('#password').value = ''; status();
+  });
+});
+$('#logout').onclick = () => perform($('#account'), () => api.signOut(auth));
+$('#copy-id').onclick = async () => {
+  try { await navigator.clipboard.writeText(user.uid); status('Account ID copied.'); }
+  catch { status('Select and copy the account ID displayed above.'); }
+};
+function updateEventTypeHelp() {
+  $('#event-type-help').textContent = $('#event-form').elements.type.value === 'personal'
+    ? 'Private to your account. No travelers can be added; other accounts can create their own personal events.'
+    : 'Expenses are split equally among current members. Adding a member recalculates everyone’s share.';
+}
+$('#event-form').elements.type.onchange = updateEventTypeHelp;
+$('#new-event').onclick = () => { updateEventTypeHelp(); $('#event-dialog').showModal(); };
+$('[data-close]').onclick = () => $('#event-dialog').close();
+$('#event-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  perform(form, async () => {
+    const values = new FormData(form);
+    const name = values.get('name').trim();
+    const categories = [...new Set(values.get('categories').split(',').map((c) => c.trim()).filter(Boolean))];
+    if (!name || !categories.length || categories.length > 20 || categories.some((c) => c.length > 40)) throw new Error('Enter a name and 1–20 categories of up to 40 characters.');
+    const type = values.get('type');
+    const eventId = await createEvent(api, db, user.uid, { name, type: values.get('type'), currency: values.get('currency'), categories, ownerName: user.email });
+    $('#event-dialog').close(); form.reset();
+    $('#'+(type === 'personal' ? 'personal' : 'active')+'-events').click(); selectEvent(eventId);
+    status(type === 'personal' ? 'Personal event created. Only you can access these expenses.' : 'Event created. Add travelers using their account IDs.');
+  });
+});
+function selectEvent(id) {
+  stopEvent(); selectedId = id; personalMonth = localDate().slice(0,7);
+  document.querySelectorAll('#event-list button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.id === id)));
+  $('#event-detail').textContent = 'Loading event…';
+  stopEvent = api.onValue(api.ref(db, `events/${id}`), (snapshot) => {
+    eventData = snapshot.val();
+    if (eventData) { $(".account-id").hidden = eventData.type === "personal"; if (eventData.type === "personal") renderPersonal(); else renderEvent(); attachEventDelete(); }
+    else $('#event-detail').textContent = 'This event is unavailable.';
+  }, (error) => { $('#event-detail').textContent = 'Could not load this event.'; status(error.message, 'error'); });
+}
+function renderEvent() {
+  // Keep entered text intact when another member adds an expense.
+  const draft = {};
+  document.querySelectorAll('#event-detail input, #event-detail select').forEach((input) => { draft[input.name] = input.value; });
+  const data = eventData;
+  const members = Object.entries(data.members);
+  const expenses = Object.entries(data.expenses || {}).sort((a,b) => b[1].createdAt - a[1].createdAt);
+  const total = expenses.reduce((sum, [,expense]) => sum + expense.amount, 0);
+  const ownTotal = expenses.filter(([,expense]) => expense.paidBy === user.uid).reduce((sum,[,expense]) => sum + expense.amount, 0);
+  const owner = data.owner === user.uid;
+  // Allocate remainder cents deterministically so balances add up to zero.
+  const memberIds = members.map(([id]) => id).sort();
+  const share = (id) => Math.floor(total / members.length) + (memberIds.indexOf(id) < total % members.length ? 1 : 0);
+  $('#event-detail').innerHTML = `
+    <div class="event-heading"><div><p class="eyebrow">SHARED ADVENTURE · ${escapeHTML(data.currency)}</p><h2>${escapeHTML(data.name)}</h2></div><span class="muted">${members.length} traveler${members.length === 1 ? '' : 's'}</span></div>
+    <div class="stats"><div class="stat"><small>Total spent</small><strong>${money(total)}</strong></div><div class="stat"><small>Your share</small><strong>${money(share(user.uid))}</strong></div><div class="stat"><small>You paid</small><strong>${money(ownTotal)}</strong></div></div>
+    <div class="forms"><form id="expense-form"><h3>Add your expense</h3><label>Description<input name="description" required maxlength="120" placeholder="Dinner by the beach"></label><label>Amount (${escapeHTML(data.currency)})<input name="amount" type="number" min="0.01" max="1000000" step="0.01" required placeholder="0.00"></label><label>Category<select name="category">${data.categories.map((c) => `<option>${escapeHTML(c)}</option>`).join('')}</select></label><label>Date<input name="date" type="date" required></label><button>Add expense</button></form><div><h3>Travelers & balances</h3><p class="muted">Positive: should receive. Negative: owes. All expenses are shared equally.</p><div id="balances">${members.map(([id,member]) => {
+      const paid = expenses.filter(([,e]) => e.paidBy === id).reduce((sum,[,e]) => sum + e.amount, 0);
+      return `<div class="balance-row"><span>${escapeHTML(member.name)}${id === user.uid ? ' (you)' : ''}${owner ? `<small class="member-account-id">ID: ${escapeHTML(id)}</small>${id !== data.owner ? `<button type="button" class="quiet" data-remove-member="${escapeHTML(id)}">Remove</button>` : ''}` : ''}</span><strong>${money(paid - share(id))}</strong></div>`;
+    }).join('')}</div>${owner ? '<form id="member-form"><h3>Add a traveler</h3><button id="repair-access" type="button" class="quiet">Refresh team access</button><label>Name<input name="memberName" required maxlength="80"></label><label>Account ID<input name="memberId" required maxlength="128" pattern="[A-Za-z0-9_-]+"></label><button class="secondary">Add member</button><p class="muted">Use the account ID displayed after the traveler signs in, not their email. Use Refresh team access to restore event listings for existing travelers.</p></form>' : ''}</div></div>
+    <h3 class="table-title">Expense activity</h3><div id="expenses">${expenses.length ? groupedExpenseHTML(expenses, ([id,e]) => `<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${escapeHTML(e.category)} · ${escapeHTML(e.date)} · ${escapeHTML(data.members[e.paidBy]?.name || 'Traveler')}</small></div><div><strong>${money(e.amount)}</strong>${e.paidBy === user.uid || owner ? `<button class="quiet" data-delete="${escapeHTML(id)}" aria-label="Delete ${escapeHTML(e.description)}">Delete</button>` : ''}</div></div>`) : '<p class="muted">No expenses yet. Start with the first coffee.</p>'}</div>`;
+  const date = new Date(); date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  $('#expense-form [name=date]').value = date.toISOString().slice(0,10);
+  Object.entries(draft).forEach(([name,value]) => { const input = document.querySelector(`#event-detail [name="${name}"]`); if(input) input.value = value; });
+  $('#expense-form').onsubmit = (event) => {
+    event.preventDefault(); const form = event.currentTarget;
+    const id = selectedId; const values = new FormData(form);
+    perform(form, async () => {
+      const amount = Math.round(Number(values.get('amount')) * 100);
+      const description = values.get('description').trim();
+      if (!description || !Number.isSafeInteger(amount) || amount <= 0 || amount > 100000000) throw new Error('Enter a description and an amount between 0.01 and 1,000,000.');
+      await api.set(api.push(api.ref(db, `events/${id}/expenses`)), {
+        description, amount, category: values.get('category'), date: values.get('date'), paidBy: user.uid, createdAt: api.serverTimestamp()
+      });
+      const current = $('#expense-form'); if (selectedId === id) { current.reset(); current.elements.date.value = date.toISOString().slice(0,10); }
+      status('Expense saved.');
+    });
+  };
+  document.querySelectorAll('[data-remove-member]').forEach(button => button.onclick = () => {
+    if (!confirm("Remove this traveler? Their recorded payments will transfer to the organizer and shares will be recalculated.")) return;
+    const id = selectedId, uid = button.dataset.removeMember;
+    perform($('#event-detail'), async () => {
+      await removeTraveler(api, db, id, user.uid, uid);
+      status('Traveler removed; remaining team shares recalculated.');
+    });
+  });
+  if (owner) $('#member-form').onsubmit = (event) => {
+    event.preventDefault(); const form = event.currentTarget; const id = selectedId;
+    const values = new FormData(form); const uid = values.get('memberId').trim(); const name = values.get('memberName').trim();
+    perform(form, async () => {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid) || !name) throw new Error('Enter a valid account ID and traveler name.');
+      await addTraveler(api, db, id, user.uid, uid, name);
+      if (selectedId === id) $('#member-form').reset(); status('Traveler added.');
+    });
+  };
+  if (owner) $('#repair-access').onclick = (event) => {
+    const button = event.currentTarget;
+    const id = selectedId;
+    const updates = Object.fromEntries(members.map(([uid]) => [`userEvents/${uid}/${id}`, true]));
+    perform(button.parentElement, async () => {
+      await api.update(api.ref(db), updates);
+      status('Team event listings refreshed. Each traveler must sign in with the account ID shown beside their name.');
+    });
+  };
+  document.querySelectorAll('[data-delete]').forEach((button) => button.onclick = () => {
+    if (!confirm('Delete this expense?')) return;
+    const id = selectedId;
+    perform($('#expenses'), async () => { await api.remove(api.ref(db, `events/${id}/expenses/${button.dataset.delete}`)); status('Expense deleted.'); });
+  });
+}
+initialize().catch((error) => {
+  clearTimeout(window.authLoadingTimer);
+  $('#google-signin').textContent = 'Sign-in unavailable';
+  status(`Could not initialize Firebase: ${error.message}. Check your connection and reload the page.`, 'error');
+});
+
+function attachEventDelete() {
+  if (eventData.owner !== user.uid) return;
+  const button = document.createElement('button'); button.className = 'quiet'; button.textContent = 'Delete event';
+  button.disabled = !!Object.keys(eventData.expenses || {}).length || !!Object.keys(eventData.recurring || {}).length;
+  button.title = 'Only events without expenses or recurring schedules can be deleted.';
+  $('#event-detail').append(button);
+  button.onclick = () => {
+    if (!confirm('Delete this empty event?')) return;
+    const id = selectedId, members = Object.keys(eventData.members);
+    perform($('#event-detail'), async () => {
+      const updates = Object.fromEntries(members.map(uid => [`userEvents/${uid}/${id}`, null]));
+      updates[`events/${id}`] = null; await api.update(api.ref(db), updates); status('Event deleted.');
+    });
+  };
+}
+function renderPersonal() {
+  const data = eventData, id = selectedId;
+  const entries = monthlyEntries(data, personalMonth);
+  $('#event-detail').innerHTML = `<div class="event-heading"><div><p class="eyebrow">PERSONAL EXPENSES · ${escapeHTML(data.currency)}</p><p class="muted">Private to you. No travelers or shared balances.</p><h2>${escapeHTML(data.name)}</h2></div></div>
+    <label>View month<input id="personal-month" type="month" value="${personalMonth}" required></label>
+    <div class="stat"><small>Monthly total (including scheduled payments)</small><strong>${money(entries.reduce((sum,[,e]) => sum+e.amount,0))}</strong></div>
+    <form id="personal-form"><h3>Add an expense or recurring payment</h3>
+    <label>Description<input name="description" required maxlength="120"></label><label>Amount<input name="amount" type="number" min="0.01" max="1000000" step="0.01" required></label>
+    <label>Category<select name="category">${data.categories.map(c=>`<option>${escapeHTML(c)}</option>`).join('')}</select></label>
+    <label>Date / first payment<input name="date" type="date" value="${localDate()}" required></label>
+    <label>Repeat<select name="repeat"><option value="once">Once</option><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="fortnightly">Fortnightly</option></select></label>
+    <label id="repeat-end" hidden>Last payment date<input name="end" type="date"></label><button>Save expense</button></form>
+    <h3>Expenses for ${escapeHTML(personalMonth)}</h3><div id="personal-expenses">${groupedExpenseHTML(entries, ([key,e])=>`<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${escapeHTML(e.date)} · ${escapeHTML(e.category)}${e.scheduled ? ` · Scheduled ${escapeHTML(e.frequency || 'monthly')}` : ''}</small></div><div>${money(e.amount)} ${!e.scheduled ? `<button class="quiet" data-personal-delete="${escapeHTML(key)}">Delete</button>` : ''}</div></div>`) || '<p class="muted">No expenses this month.</p>'}</div>
+    <h3>Recurring schedules</h3><p class="muted">Scheduled amounts are included automatically in each month. Removing a schedule removes its amounts from every month.</p>
+    ${Object.entries(data.recurring || {}).map(([key,r])=>`<div class="expense-row"><div>${escapeHTML(r.description)}<small>${escapeHTML(r.startDate || r.start)} to ${escapeHTML(r.endDate || r.end)} · ${escapeHTML(r.frequency || 'monthly')} · ${money(r.amount)}</small></div><button class="quiet" data-schedule-delete="${escapeHTML(key)}">Delete schedule</button></div>`).join('') || '<p class="muted">No recurring schedules.</p>'}`;
+  $('#personal-month').onchange = e => { if (/^\d{4}-\d{2}$/.test(e.target.value)) { personalMonth = e.target.value; renderPersonal(); attachEventDelete(); } };
+  const form = $('#personal-form');
+  form.elements.repeat.onchange = () => { const recurring = form.elements.repeat.value !== 'once'; $('#repeat-end').hidden = !recurring; form.elements.end.required = recurring; };
+  form.onsubmit = e => { e.preventDefault(); const values = new FormData(form); perform(form, async () => {
+    const amount = Math.round(Number(values.get('amount'))*100), description = values.get('description').trim(), date = values.get('date');
+    if (!description || !Number.isSafeInteger(amount) || amount <= 0 || amount > 100000000) throw new Error('Enter a valid description and amount.');
+    const record = {description, amount, category: values.get('category'), paidBy: user.uid, createdAt: api.serverTimestamp()};
+    const repeat = values.get('repeat') !== 'once';
+    if (repeat) {
+      const end = values.get('end');
+      if (!end || end < date) throw new Error('Last payment date must be on or after the first payment.');
+      record.frequency = values.get('repeat');
+      if (record.frequency === 'monthly') {
+        record.start = date.slice(0,7); record.end = end.slice(0,7); record.day = Number(date.slice(8));
+        if (end.slice(0,7) !== date.slice(0,7) && Number(end.slice(8)) < Math.min(record.day, new Date(Number(end.slice(0,4)),Number(end.slice(5,7)),0).getDate())) {
+          const previous = new Date(`${end.slice(0,7)}-01T00:00:00Z`); previous.setUTCMonth(previous.getUTCMonth()-1); record.end = previous.toISOString().slice(0,7);
+        }
+      } else { record.startDate = date; record.endDate = end; }
+    }
+    else record.date = date;
+    await api.set(api.push(api.ref(db, `events/${id}/${repeat ? 'recurring' : 'expenses'}`)), record);
+    status('Expense saved.');
+  }); };
+  document.querySelectorAll('[data-personal-delete], [data-schedule-delete]').forEach(b => b.onclick = () => {
+    if(!confirm(b.dataset.scheduleDelete ? 'Delete this schedule and its amounts from every month?' : 'Delete this expense?')) return;
+    perform($('#event-detail'), async () => { await api.remove(api.ref(db, `events/${id}/${b.dataset.scheduleDelete ? 'recurring/'+b.dataset.scheduleDelete : 'expenses/'+b.dataset.personalDelete}`)); status(b.dataset.scheduleDelete ? 'Recurring schedule deleted.' : 'Expense deleted.'); });
+  });
+}
+
+function groupedExpenseHTML(entries, row) {
+  return groupExpenses(entries).map(group => `<section class="expense-group"><div class="group-heading"><h4>${escapeHTML(group.category)}</h4><strong>${money(group.total)}</strong></div>${group.entries.map(row).join('')}</section>`).join('');
+}

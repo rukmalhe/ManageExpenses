@@ -1,0 +1,1092 @@
+/* Stylesheet guide
+ * Base components come first, followed by the existing navy theme refinements.
+ * Responsive rules stay in their original cascade order to preserve the layout.
+ * Sign-in, event tabs, notifications, and category groups follow the theme.
+ * Keep [hidden] authoritative: JavaScript uses it to switch application views. */
+
+@import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Playfair+Display:wght@400;500;600;700&display=swap');
+
+/* Foundation: typography, colors, and shared design tokens */
+:root {
+  font-family: 'Lato',sans-serif;
+  color: #1a237e;
+  background: #f4f6fb;
+  font-synthesis: none;
+  --green: #1a237e;
+  --muted: #5b6275;
+  --line: #dce2ee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+/* Page header and brand */
+header {
+  max-width: 1240px;
+  margin: auto;
+  padding: 28px 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font-family: 'Playfair Display',Georgia,serif;
+  font-size: 32px;
+  font-weight: 800;
+  text-decoration: none;
+  color: var(--green);
+  letter-spacing: -2px;
+}
+
+.brand span {
+  display: inline-block;
+  font: 12px 'Lato',sans-serif;
+  letter-spacing: 0;
+  color: var(--muted);
+  margin-left: 22px;
+}
+
+/* Main content and heading typography */
+main {
+  max-width: 1240px;
+  margin: auto;
+  padding: 45px 40px;
+  min-height: 78vh;
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Playfair Display',Georgia,serif;
+}
+
+h1 {
+  font-size: 40px;
+  line-height: 1.15;
+  letter-spacing: -1.7px;
+  margin: 10px 0 24px;
+}
+
+h2 {
+  font-size: 21px;
+  margin: 0 0 22px;
+}
+
+h3 {
+  font-size: 16px;
+}
+
+p {
+  line-height: 1.65;
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--green);
+}
+
+/* Welcome screen and introductory artwork */
+.welcome {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 100px;
+  align-items: center;
+  padding: 38px 20px;
+}
+
+.welcome h1 {
+  font-size: 68px;
+}
+
+.intro {
+  color: var(--muted);
+  max-width: 370px;
+  font-size: 17px;
+}
+
+.travel-mark {
+  font-size: 90px;
+  color: #8299b9;
+  line-height: 1.1;
+}
+
+/* Reusable cards and form controls */
+.card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 28px;
+}
+
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 16px 0;
+}
+
+input,
+select {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 13px;
+  border: 1px solid #cbd3e3;
+  border-radius: 8px;
+  font: inherit;
+  background: #fff;
+  color: inherit;
+}
+
+button {
+  background: var(--green);
+  color: white;
+  padding: 12px 18px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: 600 13px 'Lato',sans-serif;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(.94);
+}
+
+button:disabled {
+  opacity: .5;
+  cursor: wait;
+}
+
+.secondary {
+  background: #eaf0fa;
+  color: var(--green);
+}
+
+.quiet {
+  background: transparent;
+  color: var(--green);
+  border-color: var(--line);
+  padding: 8px 12px;
+}
+
+#auth-form>button {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.muted {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Shared heading layouts and account details */
+.page-heading,
+.dialog-heading,
+.event-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.account-id {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 15px 20px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 10px 0 24px;
+}
+
+code {
+  overflow-wrap: anywhere;
+}
+
+/* Event workspace and sidebar */
+.workspace {
+  display: grid;
+  grid-template-columns: 250px 1fr;
+  gap: 24px;
+}
+
+aside h2 {
+  font-size: 15px;
+}
+
+#event-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 8px 0;
+  background: #edf1fa;
+  color: var(--green);
+}
+
+#event-list button[aria-pressed=true] {
+  background: var(--green);
+  color: white;
+}
+
+/* Empty states */
+.empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--muted);
+}
+
+.empty span {
+  display: block;
+  font-size: 58px;
+  color: #8299b9;
+}
+
+.empty h2 {
+  color: #1a237e;
+  margin: 20px 0 10px;
+}
+
+/* Expense summary cards */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3,1fr);
+  gap: 12px;
+  margin: 24px 0;
+}
+
+.stat {
+  padding: 18px;
+  background: #f4f6fb;
+  border-radius: 10px;
+}
+
+.stat small {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 9px;
+}
+
+.stat strong {
+  font-size: 22px;
+}
+
+/* Expense forms, activity rows, and traveler balances */
+.forms {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 28px;
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
+}
+
+.expense-row,
+.balance-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.expense-row small {
+  display: block;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.expense-row .quiet {
+  margin-left: 10px;
+}
+
+.table-title {
+  margin-top: 32px;
+}
+
+.balance-row {
+  font-size: 13px;
+}
+
+/* Inline feedback fallback */
+#status:not(:empty) {
+  padding: 13px 18px;
+  margin-bottom: 20px;
+  border-radius: 8px;
+  background: #f2e8c9;
+  color: #624d17;
+}
+
+/* Event creation dialog */
+dialog {
+  width: min(480px,92vw);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 28px;
+  color: inherit;
+}
+
+dialog::backdrop {
+  background: #11194b88;
+}
+
+/* Footer */
+footer {
+  padding: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Visibility and keyboard focus */
+[hidden] {
+  display: none !important;
+}
+
+:focus-visible {
+  outline: 3px solid #3175c5;
+  outline-offset: 3px;
+}
+
+/* Tablet layout: stack workspace panels and condense summary cards */
+@media (max-width:850px) {
+  .welcome {
+    gap: 35px;
+    padding: 15px 0;
+  }
+
+  .welcome h1 {
+    font-size: 50px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .forms {
+    grid-template-columns: 1fr;
+  }
+
+  .stats {
+    gap: 7px;
+  }
+
+  .stat {
+    padding: 12px;
+  }
+
+  .stat strong {
+    font-size: 18px;
+  }
+}
+
+/* Phone layout: simplify branding and stack content */
+@media (max-width:580px) {
+  header,
+  main {
+    padding: 22px;
+  }
+
+  .brand span {
+    display: none;
+  }
+
+  .welcome {
+    grid-template-columns: 1fr;
+  }
+
+  .travel-mark {
+    display: none;
+  }
+
+  .welcome h1 {
+    font-size: 48px;
+  }
+
+  .page-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-bottom: 20px;
+  }
+
+  h1 {
+    font-size: 32px;
+  }
+
+  .card {
+    padding: 20px;
+  }
+
+  .stats {
+    grid-template-columns: 1fr;
+  }
+
+  .stat small {
+    display: inline;
+    margin-right: 12px;
+  }
+
+  #identity {
+    display: none;
+  }
+
+  .expense-row {
+    flex-wrap: wrap;
+  }
+}
+
+/* Navy theme refinements — later declarations intentionally override base styles */
+
+/* Navy theme tokens and surface styling */
+:root {
+  --navy: #1a237e;
+  --sky: #8299b9;
+  --surface: #fff;
+}
+
+body {
+  background: linear-gradient(180deg,#fff 0,#f4f6fb 600px);
+  font-size: 15px;
+}
+
+/* Header and typography refinements */
+header {
+  max-width: none;
+  padding: 25px max(40px,calc((100vw - 1160px)/2));
+  background: #fff;
+  border-bottom: 1px solid #e5e9f1;
+  gap: 20px;
+}
+
+.brand {
+  font-family: 'Playfair Display',Georgia,serif;
+  letter-spacing: -1px;
+  font-size: 38px;
+  font-weight: 600;
+}
+
+.brand span {
+  border-left: 1px solid var(--line);
+  padding-left: 22px;
+  margin-left: 22px;
+  font-size: 12px;
+  letter-spacing: .3px;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 500;
+}
+
+h1 {
+  letter-spacing: -1px;
+}
+
+h2 {
+  line-height: 1.35;
+}
+
+h3 {
+  font-size: 20px;
+}
+
+/* Welcome screen refinements */
+.welcome {
+  gap: 80px;
+  padding: 50px 12px 65px;
+  position: relative;
+}
+
+.welcome h1 {
+  font-size: clamp(48px,5.8vw,76px);
+  line-height: 1.12;
+  letter-spacing: -2px;
+  font-weight: 500;
+}
+
+.eyebrow {
+  letter-spacing: 2.1px;
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.welcome>.intro {
+  max-width: 390px;
+}
+
+.intro {
+  line-height: 1.85;
+  font-size: 17px;
+}
+
+.travel-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 110px;
+  height: 90px;
+  border: 1px solid #cad5e8;
+  border-radius: 50%;
+  font-size: 64px;
+  margin-top: 35px;
+  background: #edf2fa;
+  transform: rotate(-8deg);
+}
+
+/* Cards, sign-in panel, and form controls */
+.card {
+  border-radius: 12px;
+  border: 1px solid #dce2ee;
+  box-shadow: 0 8px 30px #1a237e05;
+}
+
+#auth-form {
+  padding: 38px;
+  background: #fff;
+  border-top: 3px solid var(--navy);
+}
+
+#auth-form h2 {
+  font-size: 32px;
+  margin-bottom: 26px;
+}
+
+label {
+  font-weight: 700;
+  font-size: 12px;
+  color: #37474f;
+  letter-spacing: .2px;
+}
+
+input,
+select {
+  border-radius: 5px;
+  padding: 13px 14px;
+  border-color: #d5dce9;
+  min-height: 46px;
+  transition: border-color .15s,box-shadow .15s;
+}
+
+input:hover,
+select:hover {
+  border-color: #8299b9;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--navy);
+  box-shadow: 0 0 0 3px #1a237e0c;
+}
+
+button {
+  border-radius: 5px;
+  min-height: 43px;
+  padding: 12px 20px;
+  font-size: 12px;
+  letter-spacing: .4px;
+  transition: background .15s,box-shadow .15s;
+}
+
+button:hover {
+  filter: none;
+  background: #11195f;
+  color: #fff;
+  box-shadow: 0 3px 10px #1a237e14;
+}
+
+button:disabled:hover {
+  box-shadow: none;
+}
+
+.secondary {
+  background: #fff;
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.quiet {
+  background: transparent;
+  border-color: #d5dce9;
+  min-height: 36px;
+  font-size: 11px;
+  padding: 8px 12px;
+}
+
+/* Workspace headings and account ID panel */
+.page-heading {
+  padding: 5px 0 16px;
+}
+
+.page-heading h1 {
+  font-size: 44px;
+}
+
+.account-id {
+  background: #edf1f9;
+  box-shadow: none;
+  border-color: #dce3f0;
+}
+
+.account-id code {
+  color: var(--navy);
+  background: #fff;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* Sidebar and event navigation refinements */
+.workspace {
+  gap: 22px;
+  grid-template-columns: 245px minmax(0,1fr);
+}
+
+.workspace>aside {
+  align-self: start;
+  border-top: 3px solid var(--navy);
+}
+
+aside h2 {
+  font-family: 'Lato',sans-serif;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #5b6275;
+}
+
+#event-list button {
+  background: #f4f6fb;
+  border: 1px solid #e4e9f2;
+  padding: 14px;
+  line-height: 1.5;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+#event-list button:hover {
+  background: #e8edf7;
+  color: var(--navy);
+}
+
+#event-list button[aria-pressed=true] {
+  background: var(--navy);
+  color: #fff;
+  border-color: var(--navy);
+}
+
+/* Event titles and summary cards */
+.event-heading h2 {
+  font-size: 30px;
+  margin: 7px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.stat {
+  border: 1px solid #e1e6f0;
+  border-radius: 7px;
+  padding: 20px 16px;
+}
+
+.stat small {
+  font-size: 11px;
+  letter-spacing: .3px;
+}
+
+.stat strong {
+  font-family: 'Playfair Display',Georgia,serif;
+  font-size: 26px;
+  font-weight: 500;
+}
+
+/* Expense entry and traveler balance refinements */
+.forms {
+  gap: 30px;
+}
+
+.forms h3 {
+  margin: 0 0 16px;
+}
+
+.forms #member-form h3 {
+  margin-top: 28px;
+}
+
+.expense-row {
+  align-items: center;
+}
+
+.expense-row>div:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.expense-row strong {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.expense-row small {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.balance-row {
+  align-items: center;
+  line-height: 1.5;
+}
+
+.balance-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.balance-row strong {
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* Empty-state refinements */
+.empty {
+  padding: 65px 20px;
+}
+
+.empty h2 {
+  font-size: 30px;
+  font-weight: 400;
+}
+
+.empty p {
+  font-size: 14px;
+  max-width: 390px;
+  margin: 12px auto;
+}
+
+/* Dialog and footer refinements */
+dialog {
+  border-radius: 12px;
+  border-top: 3px solid var(--navy);
+  box-shadow: 0 20px 80px #10184930;
+}
+
+dialog h2 {
+  font-size: 27px;
+}
+
+/* Footer */
+footer {
+  background: #1a237e;
+  color: #e1e6f3;
+  padding: 25px;
+  font-size: 11px;
+  letter-spacing: .7px;
+  margin-top: 20px;
+}
+
+/* Desktop sign-in panel decoration */
+@media (min-width:851px) {
+  #auth-form {
+    position: relative;
+  }
+
+  #auth-form::before {
+    content: '';
+    position: absolute;
+    inset: 15px -15px -15px 15px;
+    border: 1px solid #d9e1ef;
+    border-radius: 12px;
+    z-index: -1;
+  }
+}
+
+/* Tablet layout: stack workspace panels and condense summary cards */
+@media (max-width:850px) {
+  header {
+    padding: 22px 30px;
+  }
+
+  .welcome {
+    gap: 35px;
+    padding: 30px 0;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace>aside {
+    padding: 20px;
+  }
+
+  #event-list {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  #event-list button {
+    width: auto;
+    margin: 0;
+    max-width: 100%;
+  }
+
+  .forms {
+    grid-template-columns: 1fr;
+  }
+
+  .page-heading h1 {
+    font-size: 38px;
+  }
+}
+
+/* Phone layout: simplify branding and stack content */
+@media (max-width:580px) {
+  header {
+    padding: 18px 22px;
+  }
+
+  .brand {
+    font-size: 32px;
+  }
+
+  .welcome {
+    padding: 10px 0 25px;
+  }
+
+  .welcome h1 {
+    font-size: 51px;
+  }
+
+  .welcome .intro {
+    font-size: 15px;
+  }
+
+  .welcome {
+    gap: 25px;
+  }
+
+  #auth-form {
+    padding: 26px;
+  }
+
+  #auth-form h2 {
+    font-size: 29px;
+  }
+
+  .travel-mark {
+    display: none;
+  }
+
+  .page-heading h1 {
+    font-size: 34px;
+  }
+
+  .event-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .event-heading h2 {
+    font-size: 28px;
+  }
+
+  .stats {
+    grid-template-columns: 1fr;
+  }
+
+  .stat {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .stat small {
+    margin: 0;
+  }
+
+  .stat strong {
+    font-size: 24px;
+  }
+
+  .expense-row>div:last-child {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 1;
+    gap: 12px;
+  }
+
+  .dialog-heading h2 {
+    font-size: 24px;
+  }
+
+  footer {
+    margin-top: 0;
+  }
+}
+
+/* Accessibility: respect the reduced-motion preference */
+@media (prefers-reduced-motion:reduce) {
+  * {
+    transition: none !important;
+  }
+}
+
+/* Google sign-in and email divider */
+#auth-form #google-signin {
+  margin: 0;
+  background: #fff;
+  border: 1px solid #747775;
+  color: #1f1f1f;
+  min-height: 44px;
+  font-size: 14px;
+  letter-spacing: .25px;
+  font-weight: 700;
+}
+
+#auth-form #google-signin:hover {
+  background: #f4f6fb;
+  box-shadow: 0 1px 4px #1a237e18;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  margin: 22px 0;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* Traveler account IDs */
+.member-account-id {
+  display: block;
+  margin-top: 5px;
+  font: 10px ui-monospace,monospace;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* Event tabs and personal expense controls */
+.event-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.event-tabs button[aria-pressed="true"] {
+  background: var(--navy);
+  color: #fff;
+}
+
+.balance-row button {
+  display: block;
+  margin-top: 8px;
+}
+
+#personal-form {
+  margin-top: 24px;
+  max-width: 520px;
+}
+
+#event-detail>button {
+  margin-top: 24px;
+}
+
+/* Toast notifications: top-layer placement keeps feedback above dialogs */
+#status[popover] {
+  position: fixed;
+  inset: auto 24px 24px auto;
+  margin: 0;
+  width: min(460px,calc(100vw - 32px));
+  border: 1px solid #b5c8bb;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px #10184930;
+  padding: 16px 18px;
+  background: #edf7ef;
+  color: #215333;
+  align-items: center;
+  gap: 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+#status:popover-open {
+  display: flex;
+}
+
+#status[popover][data-kind="error"] {
+  background: #fff0ed;
+  color: #8b2520;
+  border-color: #e0b0a9;
+}
+
+#status .quiet {
+  flex-shrink: 0;
+  color: inherit;
+  border-color: currentColor;
+}
+
+#status span {
+  overflow-wrap: anywhere;
+}
+
+/* Expense categories and group totals */
+.expense-group {
+  margin: 20px 0 28px;
+}
+
+.group-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  background: #edf1f9;
+  border-radius: 6px;
+}
+
+.group-heading h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.group-heading strong {
+  font-size: 14px;
+}
+
+/* Phone layout: simplify branding and stack content */
+@media (max-width:580px) {
+  #status[popover] {
+    inset: auto 16px 16px;
+    width: calc(100vw - 32px);
+  }
+}
+
+.event-tabs {
+  flex-wrap: wrap;
+}
+
+.event-tabs .quiet {
+  padding: 8px 10px;
+}

@@ -1,0 +1,33 @@
+services:
+  expensesapp:
+    image: expensesapp:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: expensesapp
+    restart: unless-stopped
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    networks:
+      - platform-network
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  platform-network:
+    external: true

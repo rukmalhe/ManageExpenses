@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Moko · Shared trip expenses</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <header><a class="brand" href="./">↗ roam<span>Good trips. Fair splits.</span></a>
+    <div id="account" hidden><span id="identity"></span> <button id="logout" class="quiet">Sign out</button></div>
+  </header>
+  <main>
+    <div id="status" popover="manual" role="status" aria-live="polite"></div>
+    <section id="auth-panel" class="welcome">
+      <div>
+        <p class="eyebrow">LESS MATH. MORE MEMORIES.</p>
+        <h1>A little less<br>“who paid?”</h1>
+        <p class="intro">One place for your people, your plans, and every shared expense along the way.</p>
+        <div class="travel-mark" aria-hidden="true">↗</div>
+      </div>
+      <form id="auth-form" class="card">
+        <p class="eyebrow">YOUR NEXT ADVENTURE</p>
+        <h2>Welcome to Roam</h2>
+        <button id="google-signin" type="button" class="secondary" disabled>Loading sign-in…</button>
+        <p id="auth-status" class="muted" role="status" aria-live="polite">Connecting to Firebase…</p>
+        <div class="auth-divider"><span>or use your email</span></div>
+        <label>Email<input id="email" type="email" required autocomplete="email"></label><label>Password<input
+            id="password" type="password" required minlength="6" autocomplete="current-password"></label><button
+          name="action" value="login">Sign in</button><button name="action" value="register" class="secondary">Create an
+          account</button>
+        <p class="muted">Each traveler uses their own account.</p>
+      </form>
+    </section>
+    <section id="app" hidden>
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">THE TRIP DESK</p>
+          <h1>Your expenses & adventures</h1>
+        </div><button id="new-event">+ Create event</button>
+      </div>
+      <div class="account-id card"><span>Share your account ID with the event organizer to be added.</span><code
+          id="uid"></code><button id="copy-id" class="quiet">Copy ID</button></div>
+      <div class="workspace">
+        <aside class="card">
+          <h2>Your events</h2>
+          <div class="event-tabs" aria-label="Event views"><button id="active-events" class="quiet"
+              aria-pressed="true">Active</button><button id="personal-events" class="quiet"
+              aria-pressed="false">Personal</button><button id="archived-events" class="quiet"
+              aria-pressed="false">Archived</button></div>
+          <div id="event-list"></div>
+        </aside>
+        <section id="event-detail" class="card">
+          <div class="empty"><span>↗</span>
+            <h2>Make room for a new memory</h2>
+            <p>Create an event or ask an organizer to add your account ID.</p>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <dialog id="event-dialog">
+    <form id="event-form">
+      <div class="dialog-heading">
+        <h2>Create an event</h2><button type="button" class="quiet" data-close>Close</button>
+      </div><label>Event type<select name="type">
+          <option value="shared">Shared expenses</option>
+          <option value="personal">Personal expenses</option>
+        </select></label><label>Event name<input name="name" required maxlength="80"
+          placeholder="A weekend away"></label><label>Currency<select name="currency">
+          <option>NZD</option>
+          <option>USD</option>
+          <option>EUR</option>
+          <option>GBP</option>
+          <option>LKR</option>
+          <option>AUD</option>
+        </select></label><label>Categories, separated by commas<input name="categories" required maxlength="300"
+          value="Food, Transport, Accommodation, Activities, Other"></label>
+      <p id="event-type-help" class="muted">Expenses are split equally among current members. Adding a member
+        recalculates everyone's share.
+      </p><button>Create event</button>
+    </form>
+  </dialog>
+  <footer>Made for the journey. Shared fairly.</footer>
+  <script src="bootstrap.js" defer></script>
+</body>
+
+</html>
