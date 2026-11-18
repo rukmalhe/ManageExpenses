@@ -32,3 +32,48 @@ export function groupExpenses(entries) {
   }
   return [...groups.values()].sort((a,b) => a.category.localeCompare(b.category));
 }
+
+// Parse additions directly into integer cents; never execute user input as code.
+export function parseExpenseAmount(expression) {
+  const input = String(expression).trim();
+  if (!input || input.length > 300) throw new Error('Enter an amount or add amounts with + (for example, 24.69+10).');
+  let total = 0;
+  for (const part of input.split('+')) {
+    const term = part.trim();
+    if (!/^(?:\d+(?:\.\d{1,2})?|\.\d{1,2})$/.test(term)) {
+      throw new Error('Use positive amounts with up to two decimal places, separated by +.');
+    }
+    const [whole, fraction = ''] = term.split('.');
+    total += Number(whole || '0') * 100 + Number(fraction.padEnd(2, '0'));
+    if (!Number.isSafeInteger(total) || total > 100000000) throw new Error('The total cannot exceed 1,000,000.');
+  }
+  if (total <= 0) throw new Error('The total must be at least 0.01.');
+  return total;
+}
+
+// Cumulative expenditure through an inclusive local date, calculated in cents.
+// Count schedule occurrences arithmetically instead of generating every past row.
+export function expenditureThroughDate(data, today) {
+  let total = Object.values(data.expenses || {})
+    .filter(expense => expense.date <= today)
+    .reduce((sum, expense) => sum + expense.amount, 0);
+  if (data.type !== 'personal') return total;
+  const monthIndex = month => Number(month.slice(0,4)) * 12 + Number(month.slice(5,7)) - 1;
+  for (const schedule of Object.values(data.recurring || {})) {
+    let count = 0;
+    if (!schedule.frequency || schedule.frequency === 'monthly') {
+      const lastMonth = schedule.end < today.slice(0,7) ? schedule.end : today.slice(0,7);
+      count = monthIndex(lastMonth) - monthIndex(schedule.start) + 1;
+      if (count > 0 && lastMonth === today.slice(0,7)) {
+        const lastDay = new Date(Date.UTC(Number(lastMonth.slice(0,4)), Number(lastMonth.slice(5,7)), 0)).getUTCDate();
+        if (Math.min(schedule.day, lastDay) > Number(today.slice(8))) count--;
+      }
+    } else if (['weekly', 'fortnightly'].includes(schedule.frequency)) {
+      const lastDate = schedule.endDate < today ? schedule.endDate : today;
+      const days = (Date.parse(`${lastDate}T00:00:00Z`) - Date.parse(`${schedule.startDate}T00:00:00Z`)) / dayMs;
+      count = Math.floor(days / (schedule.frequency === 'weekly' ? 7 : 14)) + 1;
+    }
+    total += Math.max(0, count) * schedule.amount;
+  }
+  return total;
+}

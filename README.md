@@ -22,11 +22,11 @@ Create two accounts in separate browser sessions. Each account displays its ID a
 
 Amounts are stored in integer cents. Balances divide the total equally across all current members; remaining cents go in sorted account-ID order so balances sum to zero. Adding a member includes that traveler in all existing costs. All supported currencies use two decimal places. Balances describe what people owe; payment settlement recording is not included.
 
-Event names, categories, and currency are fixed after creation. Organizers can remove travelers; their recorded payments transfer to the organizer and all remaining shares recalculate. Empty events can be deleted. Shared events move to the Archived tab three calendar months after creation. To correct an expense, delete and re-add it. Account IDs must belong to registered travelers; this app does not send invitations or emails.
+Event names, categories, and currency are fixed after creation. Organizers can remove travelers; their recorded payments transfer to the organizer and all remaining shares recalculate. Empty events can be deleted. Shared events move to the Archived tab three calendar months after creation. Use Edit beside Delete to load an expense into the existing form, change its amount or date, and save or cancel. Account IDs must belong to registered travelers; this app does not send invitations or emails.
 
 ## Data and access
 
-`events/{eventId}` contains owner, name, currency, categories, members, and expenses. `userEvents/{uid}/{eventId}` is a private discovery index. Only event members can read event data. Only an event owner can add members and update event discovery indexes. Expenses are immutable except for deletion; an expense author must be the signed-in member. No service-account credentials are used in the browser.
+`events/{eventId}` contains owner, name, currency, categories, members, and expenses. `userEvents/{uid}/{eventId}` is a private discovery index. Only event members can read event data. Only an event owner can add members and update event discovery indexes. Expense authors and organizers can edit saved amounts and dates; descriptions, categories, creation times, and payment attribution are preserved. New expenses must be attributed to the signed-in member. No service-account credentials are used in the browser.
 
 Event/member writes precede their discovery-index writes. If the second operation fails, the underlying record remains saved; repair the corresponding `userEvents` entry in the Firebase Console. Account IDs are not verified against Firebase Auth by this browser-only implementation.
 
@@ -49,3 +49,9 @@ Run `npm ci`, then `npm test` (Java 21 or newer required). This starts the local
 Expenses are grouped by category with category totals, including both scheduled and one-off expenses. Success messages appear as dismissible toasts for 6.5 seconds; errors receive focus and stay visible until dismissed or another action begins.
 
 Personal events appear in a separate Personal tab and are restricted to their owner, even if legacy data contains other member IDs. Event caches are cleared when accounts change. Duplicate traveler IDs (including the organizer’s ID) produce a warning without changing the original member; use Refresh team access to repair existing discovery indexes. Regression tests cover both behaviors and owner-only database access.
+
+Amount fields accept a single amount or additions such as `24.69+5671+20967`. A live total appears before saving; only the total in integer cents is stored. This works for shared, personal, and recurring expenses. Use `+` between amounts and at most two decimal places per amount; totals must be between 0.01 and 1,000,000.
+
+Recurring schedules and their generated occurrences cannot be edited after saving. To correct a schedule, delete it and create a replacement; deleting removes its calculated amounts from every month, including earlier months. Existing shared-expense balances recalculate from the updated amounts. Deploy the updated `database.rules.json` to enable member edits in live Firebase.
+
+Each event in the Shared, Personal, and Archived lists shows cumulative expenditure through today in its own currency. This is the whole event total, across all months, excluding future-dated expenses. Personal totals also include scheduled payments due through the local date; these are not confirmations of payment. Totals update with live changes and refresh their date cutoff every minute.

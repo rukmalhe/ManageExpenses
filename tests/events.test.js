@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from 'vitest';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
 import * as api from 'firebase/database';
-import { createEvent, removeTraveler, addTraveler } from '../event-actions.js';
+import { createEvent, removeTraveler, addTraveler, editExpenseValues } from '../event-actions.js';
 
 let env;
 const details = { name: 'Trip', type: 'shared', currency: 'NZD', categories: ['Food'], ownerName: 'Organizer' };
@@ -95,5 +95,62 @@ describe('personal privacy and duplicate traveler regressions', () => {
     expect((await api.get(api.ref(owner, `events/${id}/members`))).val()).toEqual({ owner: { name: 'Organizer' }, traveler: { name: 'Original name' } });
     const traveler = env.authenticatedContext('traveler').database();
     expect((await api.get(api.ref(traveler, `userEvents/traveler/${id}`))).val()).toBe(true);
+  });
+});
+
+
+describe('editing saved expenses', () => {
+  async function setup(type = 'shared') {
+    const db = env.authenticatedContext('owner').database();
+    const id = await createEvent(api, db, 'owner', { ...details, type });
+    if (type === 'shared') await addTraveler(api, db, id, 'owner', 'traveler', 'Traveler');
+    const payer = type === 'shared' ? env.authenticatedContext('traveler').database() : db;
+    await api.set(api.ref(payer, `events/${id}/expenses/meal`), {
+      description: 'Meal', category: 'Food', amount: 100, date: '2026-11-16', paidBy: type === 'shared' ? 'traveler' : 'owner', createdAt: 1
+    });
+    return { db, id, payer };
+  }
+  it.each(['shared', 'personal'])('updates amount and date in place for %s expenses', async type => {
+    const { db, id, payer } = await setup(type);
+    await editExpenseValues(api, payer, id, 'expenses', 'meal', 29107, '2026-12-02');
+    const record = (await api.get(api.ref(db, `events/${id}/expenses/meal`))).val();
+    expect(record).toEqual({ description: 'Meal', category: 'Food', amount: 29107, date: '2026-12-02', paidBy: type === 'shared' ? 'traveler' : 'owner', createdAt: 1 });
+    expect(Object.keys((await api.get(api.ref(db, `events/${id}/expenses`))).val())).toEqual(['meal']);
+  });
+  it('lets the organizer edit another traveler’s amount without changing attribution', async () => {
+    const { db, id } = await setup();
+    await editExpenseValues(api, db, id, 'expenses', 'meal', 550, '2026-11-17');
+    expect((await api.get(api.ref(db, `events/${id}/expenses/meal/paidBy`))).val()).toBe('traveler');
+  });
+  it('rejects edits to someone else’s expense by an ordinary member', async () => {
+    const { db, id } = await setup();
+    await addTraveler(api, db, id, 'owner', 'other', 'Other');
+    const other = env.authenticatedContext('other').database();
+    await assertFails(editExpenseValues(api, other, id, 'expenses', 'meal', 500, '2026-11-18'));
+  });
+  it('rejects invalid amounts and dates and does not recreate deleted records', async () => {
+    const { db, id } = await setup('personal');
+    await expect(editExpenseValues(api, db, id, 'expenses', 'meal', 0, '2026-11-18')).rejects.toThrow('amount');
+    await expect(editExpenseValues(api, db, id, 'expenses', 'meal', 100, '2026-02-30')).rejects.toThrow('date');
+    await api.remove(api.ref(db, `events/${id}/expenses/meal`));
+    await expect(editExpenseValues(api, db, id, 'expenses', 'meal', 100, '2026-11-18')).rejects.toThrow('no longer available');
+    expect((await api.get(api.ref(db, `events/${id}/expenses/meal`))).exists()).toBe(false);
+  });
+  it.each(['monthly', 'weekly', 'fortnightly'])('allows creating and deleting %s schedules but rejects edits', async frequency => {
+    const { db, id } = await setup('personal');
+    const record = { description: 'Loan', category: 'Food', amount: 100, frequency, paidBy: 'owner', createdAt: 1,
+      ...(frequency === 'monthly' ? { start: '2026-01', end: '2027-12', day: 31 } : { startDate: '2026-01-01', endDate: '2027-12-31' }) };
+    const schedule = api.ref(db, `events/${id}/recurring/loan`);
+    await api.set(schedule, record);
+    await expect(editExpenseValues(api, db, id, 'recurring', 'loan', 200, '2026-02-15')).rejects.toThrow('Recurring payments cannot be edited');
+    await assertFails(api.update(schedule, { amount: 200 }));
+    await assertFails(api.update(schedule, frequency === 'monthly' ? { day: 15 } : { startDate: '2026-02-15' }));
+    await assertFails(api.update(api.ref(db, `events/${id}`), { 'recurring/loan/amount': 200 }));
+    await assertFails(api.update(schedule, { frequency: null }));
+    expect((await api.get(schedule)).val()).toEqual(record);
+    await api.remove(schedule);
+    expect((await api.get(schedule)).exists()).toBe(false);
+    await api.set(schedule, { ...record, amount: 200 });
+    expect((await api.get(schedule)).val().amount).toBe(200);
   });
 });

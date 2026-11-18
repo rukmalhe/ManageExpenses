@@ -1,5 +1,5 @@
-import { monthlyEntries, groupExpenses } from './expense-utils.js';
-import { createEvent, removeTraveler, addTraveler, visibleEvents } from './event-actions.js';
+import { monthlyEntries, groupExpenses, parseExpenseAmount, expenditureThroughDate } from './expense-utils.js';
+import { createEvent, removeTraveler, addTraveler, visibleEvents, editExpenseValues } from './event-actions.js';
 // Firebase web configuration. These identify the project; database rules control access.
 import { firebaseConfig } from './firebase-config.js';
 
@@ -23,6 +23,7 @@ const status = (message = '', kind = 'success') => {
 };
 const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let user, db, auth, api, selectedId, eventData;
+let editing = null;
 let stopIndex = () => {}, stopEvent = () => {};
 let eventListeners = [];
 let eventTab = "active", eventCache = {}, personalMonth = localDate().slice(0,7);
@@ -31,7 +32,17 @@ function isArchived(data) { const cutoff = new Date(data.createdAt); const day =
 function renderEventList() {
   $("#event-list").replaceChildren();
   visibleEvents(eventCache, user?.uid, eventTab).filter(([,d]) => eventTab === "personal" || isArchived(d) === (eventTab === "archived")).forEach(([id,d]) => {
-    const b = document.createElement("button"); b.textContent = d.name; b.dataset.id = id; b.setAttribute("aria-pressed", String(id === selectedId)); b.onclick = () => selectEvent(id); $("#event-list").append(b);
+    const b = document.createElement('button');
+    b.dataset.id = id;
+    b.setAttribute('aria-pressed', String(id === selectedId));
+    const name = document.createElement('span'); name.className = 'event-name'; name.textContent = d.name;
+    const total = document.createElement('strong'); total.className = 'event-total';
+    total.textContent = new Intl.NumberFormat(undefined, { style: 'currency', currency: d.currency, currencyDisplay: 'code' }).format(expenditureThroughDate(d, localDate()) / 100);
+    const label = document.createElement('small'); label.className = 'event-total-label'; label.textContent = 'Total through today';
+    if (d.type === 'personal') label.title = 'Includes recurring payments due through today, not confirmed payments.';
+    b.append(name, total, label);
+    b.onclick = () => selectEvent(id);
+    $('#event-list').append(b);
   });
   if (!$("#event-list").children.length) $("#event-list").textContent = "No " + (eventTab === "active" ? "shared" : eventTab) + " events.";
 }
@@ -66,7 +77,7 @@ async function initialize() {
   status();
   api.onAuthStateChanged(auth, (nextUser) => {
     stopIndex(); stopEvent(); eventListeners.forEach((off) => off()); eventListeners = [];
-    selectedId = null; eventData = null; eventCache = {}; user = nextUser;
+    selectedId = null; eventData = null; editing = null; eventCache = {}; user = nextUser;
     $(".account-id").hidden = false;
     $('#auth-panel').hidden = !!user; $('#app').hidden = !user; $('#account').hidden = !user;
     $('#event-list').replaceChildren();
@@ -155,7 +166,7 @@ $('#event-form').addEventListener('submit', (event) => {
   });
 });
 function selectEvent(id) {
-  stopEvent(); selectedId = id; personalMonth = localDate().slice(0,7);
+  stopEvent(); editing = null; selectedId = id; personalMonth = localDate().slice(0,7);
   document.querySelectorAll('#event-list button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.id === id)));
   $('#event-detail').textContent = 'Loading event…';
   stopEvent = api.onValue(api.ref(db, `events/${id}`), (snapshot) => {
@@ -180,19 +191,24 @@ function renderEvent() {
   $('#event-detail').innerHTML = `
     <div class="event-heading"><div><p class="eyebrow">SHARED ADVENTURE · ${escapeHTML(data.currency)}</p><h2>${escapeHTML(data.name)}</h2></div><span class="muted">${members.length} traveler${members.length === 1 ? '' : 's'}</span></div>
     <div class="stats"><div class="stat"><small>Total spent</small><strong>${money(total)}</strong></div><div class="stat"><small>Your share</small><strong>${money(share(user.uid))}</strong></div><div class="stat"><small>You paid</small><strong>${money(ownTotal)}</strong></div></div>
-    <div class="forms"><form id="expense-form"><h3>Add your expense</h3><label>Description<input name="description" required maxlength="120" placeholder="Dinner by the beach"></label><label>Amount (${escapeHTML(data.currency)})<input name="amount" type="number" min="0.01" max="1000000" step="0.01" required placeholder="0.00"></label><label>Category<select name="category">${data.categories.map((c) => `<option>${escapeHTML(c)}</option>`).join('')}</select></label><label>Date<input name="date" type="date" required></label><button>Add expense</button></form><div><h3>Travelers & balances</h3><p class="muted">Positive: should receive. Negative: owes. All expenses are shared equally.</p><div id="balances">${members.map(([id,member]) => {
+    <div class="forms"><form id="expense-form"><h3>Add your expense</h3><label>Description<input name="description" required maxlength="120" placeholder="Dinner by the beach"></label><label>Amount (${escapeHTML(data.currency)})<input name="amount" type="text" maxlength="300" required placeholder="24.69+56.71+209.67" aria-describedby="amount-total"></label><label>Category<select name="category">${data.categories.map((c) => `<option>${escapeHTML(c)}</option>`).join('')}</select></label><label>Date<input name="date" type="date" required></label><button>Add expense</button></form><div><h3>Travelers & balances</h3><p class="muted">Positive: should receive. Negative: owes. All expenses are shared equally.</p><div id="balances">${members.map(([id,member]) => {
       const paid = expenses.filter(([,e]) => e.paidBy === id).reduce((sum,[,e]) => sum + e.amount, 0);
       return `<div class="balance-row"><span>${escapeHTML(member.name)}${id === user.uid ? ' (you)' : ''}${owner ? `<small class="member-account-id">ID: ${escapeHTML(id)}</small>${id !== data.owner ? `<button type="button" class="quiet" data-remove-member="${escapeHTML(id)}">Remove</button>` : ''}` : ''}</span><strong>${money(paid - share(id))}</strong></div>`;
     }).join('')}</div>${owner ? '<form id="member-form"><h3>Add a traveler</h3><button id="repair-access" type="button" class="quiet">Refresh team access</button><label>Name<input name="memberName" required maxlength="80"></label><label>Account ID<input name="memberId" required maxlength="128" pattern="[A-Za-z0-9_-]+"></label><button class="secondary">Add member</button><p class="muted">Use the account ID displayed after the traveler signs in, not their email. Use Refresh team access to restore event listings for existing travelers.</p></form>' : ''}</div></div>
-    <h3 class="table-title">Expense activity</h3><div id="expenses">${expenses.length ? groupedExpenseHTML(expenses, ([id,e]) => `<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${escapeHTML(e.category)} · ${escapeHTML(e.date)} · ${escapeHTML(data.members[e.paidBy]?.name || 'Traveler')}</small></div><div><strong>${money(e.amount)}</strong>${e.paidBy === user.uid || owner ? `<button class="quiet" data-delete="${escapeHTML(id)}" aria-label="Delete ${escapeHTML(e.description)}">Delete</button>` : ''}</div></div>`) : '<p class="muted">No expenses yet. Start with the first coffee.</p>'}</div>`;
+    <h3 class="table-title">Expense activity</h3><div id="expenses">${expenses.length ? groupedExpenseHTML(expenses, ([id,e]) => `<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${escapeHTML(e.category)} · ${escapeHTML(e.date)} · ${escapeHTML(data.members[e.paidBy]?.name || 'Traveler')}</small></div><div><strong>${money(e.amount)}</strong>${e.paidBy === user.uid || owner ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(id)}">Edit</button><button class="quiet" data-delete="${escapeHTML(id)}" aria-label="Delete ${escapeHTML(e.description)}">Delete</button>` : ''}</div></div>`) : '<p class="muted">No expenses yet. Start with the first coffee.</p>'}</div>`;
   const date = new Date(); date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
   $('#expense-form [name=date]').value = date.toISOString().slice(0,10);
   Object.entries(draft).forEach(([name,value]) => { const input = document.querySelector(`#event-detail [name="${name}"]`); if(input) input.value = value; });
+  configureExpenseEditor($('#expense-form'));
+  attachAmountPreview($('#expense-form'));
+  bindEditButtons();
   $('#expense-form').onsubmit = (event) => {
     event.preventDefault(); const form = event.currentTarget;
     const id = selectedId; const values = new FormData(form);
+    const edit = editing;
     perform(form, async () => {
-      const amount = Math.round(Number(values.get('amount')) * 100);
+      if (edit) { await saveExpenseEdit(edit, values); return; }
+      const amount = parseExpenseAmount(values.get('amount'));
       const description = values.get('description').trim();
       if (!description || !Number.isSafeInteger(amount) || amount <= 0 || amount > 100000000) throw new Error('Enter a description and an amount between 0.01 and 1,000,000.');
       await api.set(api.push(api.ref(db, `events/${id}/expenses`)), {
@@ -256,25 +272,32 @@ function attachEventDelete() {
   };
 }
 function renderPersonal() {
+  const draft = readExpenseDraft($('#personal-form'));
   const data = eventData, id = selectedId;
   const entries = monthlyEntries(data, personalMonth);
   $('#event-detail').innerHTML = `<div class="event-heading"><div><p class="eyebrow">PERSONAL EXPENSES · ${escapeHTML(data.currency)}</p><p class="muted">Private to you. No travelers or shared balances.</p><h2>${escapeHTML(data.name)}</h2></div></div>
     <label>View month<input id="personal-month" type="month" value="${personalMonth}" required></label>
     <div class="stat"><small>Monthly total (including scheduled payments)</small><strong>${money(entries.reduce((sum,[,e]) => sum+e.amount,0))}</strong></div>
     <form id="personal-form"><h3>Add an expense or recurring payment</h3>
-    <label>Description<input name="description" required maxlength="120"></label><label>Amount<input name="amount" type="number" min="0.01" max="1000000" step="0.01" required></label>
+    <label>Description<input name="description" required maxlength="120"></label><label>Amount<input name="amount" type="text" maxlength="300" required placeholder="24.69+56.71+209.67" aria-describedby="amount-total"></label>
     <label>Category<select name="category">${data.categories.map(c=>`<option>${escapeHTML(c)}</option>`).join('')}</select></label>
     <label>Date / first payment<input name="date" type="date" value="${localDate()}" required></label>
     <label>Repeat<select name="repeat"><option value="once">Once</option><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="fortnightly">Fortnightly</option></select></label>
     <label id="repeat-end" hidden>Last payment date<input name="end" type="date"></label><button>Save expense</button></form>
-    <h3>Expenses for ${escapeHTML(personalMonth)}</h3><div id="personal-expenses">${groupedExpenseHTML(entries, ([key,e])=>`<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${escapeHTML(e.date)} · ${escapeHTML(e.category)}${e.scheduled ? ` · Scheduled ${escapeHTML(e.frequency || 'monthly')}` : ''}</small></div><div>${money(e.amount)} ${!e.scheduled ? `<button class="quiet" data-personal-delete="${escapeHTML(key)}">Delete</button>` : ''}</div></div>`) || '<p class="muted">No expenses this month.</p>'}</div>
-    <h3>Recurring schedules</h3><p class="muted">Scheduled amounts are included automatically in each month. Removing a schedule removes its amounts from every month.</p>
-    ${Object.entries(data.recurring || {}).map(([key,r])=>`<div class="expense-row"><div>${escapeHTML(r.description)}<small>${escapeHTML(r.startDate || r.start)} to ${escapeHTML(r.endDate || r.end)} · ${escapeHTML(r.frequency || 'monthly')} · ${money(r.amount)}</small></div><button class="quiet" data-schedule-delete="${escapeHTML(key)}">Delete schedule</button></div>`).join('') || '<p class="muted">No recurring schedules.</p>'}`;
+    <h3>Expenses for ${escapeHTML(personalMonth)}</h3><div id="personal-expenses">${groupedExpenseHTML(entries, ([key,e])=>`<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${escapeHTML(e.date)} · ${escapeHTML(e.category)}${e.scheduled ? ` · Scheduled ${escapeHTML(e.frequency || 'monthly')}` : ''}</small></div><div>${money(e.amount)} ${!e.scheduled ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(key)}">Edit</button><button class="quiet" data-personal-delete="${escapeHTML(key)}">Delete</button>` : ''}</div></div>`) || '<p class="muted">No expenses this month.</p>'}</div>
+    <h3>Recurring schedules</h3><p class="muted">Recurring payments cannot be edited. To make a correction, delete the schedule and create a replacement. Deleting removes its amounts from every month, including earlier months.</p>
+    ${Object.entries(data.recurring || {}).map(([key,r])=>`<div class="expense-row"><div>${escapeHTML(r.description)}<small>${escapeHTML(r.startDate || r.start)} to ${escapeHTML(r.endDate || r.end)} · ${escapeHTML(r.frequency || 'monthly')} · ${money(r.amount)}</small></div><div><button class="quiet" data-schedule-delete="${escapeHTML(key)}">Delete schedule</button></div></div>`).join('') || '<p class="muted">No recurring schedules.</p>'}`;
   $('#personal-month').onchange = e => { if (/^\d{4}-\d{2}$/.test(e.target.value)) { personalMonth = e.target.value; renderPersonal(); attachEventDelete(); } };
   const form = $('#personal-form');
+  restoreExpenseDraft(form, draft);
+  configureExpenseEditor(form);
+  attachAmountPreview(form);
+  bindEditButtons();
   form.elements.repeat.onchange = () => { const recurring = form.elements.repeat.value !== 'once'; $('#repeat-end').hidden = !recurring; form.elements.end.required = recurring; };
-  form.onsubmit = e => { e.preventDefault(); const values = new FormData(form); perform(form, async () => {
-    const amount = Math.round(Number(values.get('amount'))*100), description = values.get('description').trim(), date = values.get('date');
+  form.elements.repeat.onchange();
+  form.onsubmit = e => { e.preventDefault(); const values = new FormData(form); const edit = editing; perform(form, async () => {
+    if (edit) { await saveExpenseEdit(edit, values); return; }
+    const amount = parseExpenseAmount(values.get('amount')), description = values.get('description').trim(), date = values.get('date');
     if (!description || !Number.isSafeInteger(amount) || amount <= 0 || amount > 100000000) throw new Error('Enter a valid description and amount.');
     const record = {description, amount, category: values.get('category'), paidBy: user.uid, createdAt: api.serverTimestamp()};
     const repeat = values.get('repeat') !== 'once';
@@ -291,6 +314,7 @@ function renderPersonal() {
     }
     else record.date = date;
     await api.set(api.push(api.ref(db, `events/${id}/${repeat ? 'recurring' : 'expenses'}`)), record);
+    if (selectedId === id && !editing) { $('#personal-form').reset(); refreshSelectedEvent(); }
     status('Expense saved.');
   }); };
   document.querySelectorAll('[data-personal-delete], [data-schedule-delete]').forEach(b => b.onclick = () => {
@@ -301,4 +325,82 @@ function renderPersonal() {
 
 function groupedExpenseHTML(entries, row) {
   return groupExpenses(entries).map(group => `<section class="expense-group"><div class="group-heading"><h4>${escapeHTML(group.category)}</h4><strong>${money(group.total)}</strong></div>${group.entries.map(row).join('')}</section>`).join('');
+}
+
+// Keep a visible total beside the expression and use native form validation.
+function attachAmountPreview(form) {
+  const input = form.elements.amount;
+  const output = document.createElement('output');
+  output.id = 'amount-total'; output.className = 'amount-total';
+  output.setAttribute('aria-live', 'polite');
+  input.insertAdjacentElement('afterend', output);
+  const update = () => {
+    input.setCustomValidity('');
+    if (!input.value.trim()) { output.textContent = 'Enter an amount, or add several with +.'; return; }
+    try {
+      output.textContent = `Total: ${money(parseExpenseAmount(input.value))}`;
+      output.dataset.kind = 'success';
+    } catch (error) {
+      input.setCustomValidity(error.message);
+      output.textContent = error.message; output.dataset.kind = 'error';
+    }
+  };
+  input.addEventListener('input', update);
+  form.addEventListener('reset', () => setTimeout(update, 0));
+  update();
+}
+
+function readExpenseDraft(form) {
+  return form ? Object.fromEntries([...form.elements].filter(input => input.name).map(input => [input.name, input.value])) : {};
+}
+function restoreExpenseDraft(form, draft) {
+  Object.entries(draft).forEach(([name, value]) => { if (form.elements[name]) form.elements[name].value = value; });
+}
+function refreshSelectedEvent() {
+  if (eventData.type === 'personal') renderPersonal(); else renderEvent();
+  attachEventDelete();
+}
+function configureExpenseEditor(form) {
+  if (!editing || editing.eventId !== selectedId) return;
+  if (!eventData[editing.collection]?.[editing.key]) {
+    editing = null;
+    status('The expense being edited is no longer available.', 'error');
+    return;
+  }
+  form.querySelector('h3').textContent = 'Edit expense';
+  // Only amount and date are editable; attribution and other saved fields stay intact.
+  [...form.elements].filter(input => input.name && !['amount', 'date'].includes(input.name)).forEach(input => input.disabled = true);
+  form.querySelector('button:not([type="button"])').textContent = 'Save changes';
+  const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'quiet'; cancel.textContent = 'Cancel edit';
+  cancel.onclick = () => { editing = null; form.reset(); refreshSelectedEvent(); };
+  form.append(cancel);
+
+}
+function bindEditButtons() {
+  document.querySelectorAll('[data-edit-expense]').forEach(button => button.onclick = () => {
+    const collection = 'expenses';
+    const key = button.dataset.editExpense;
+    const record = eventData[collection]?.[key];
+    if (!record) { status('This expense is no longer available.', 'error'); return; }
+    editing = { eventId: selectedId, collection, key };
+    refreshSelectedEvent();
+    const form = $('#personal-form') || $('#expense-form');
+    form.elements.description.value = record.description;
+    form.elements.category.value = record.category;
+    form.elements.amount.value = (record.amount / 100).toFixed(2);
+    form.elements.date.value = record.date;
+    form.elements.amount.dispatchEvent(new Event('input'));
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    form.elements.amount.focus({ preventScroll: true });
+  });
+}
+async function saveExpenseEdit(edit, values) {
+  await editExpenseValues(api, db, edit.eventId, edit.collection, edit.key, parseExpenseAmount(values.get('amount')), values.get('date'));
+  if (selectedId === edit.eventId && editing === edit) {
+    editing = null;
+    const form = $('#personal-form') || $('#expense-form');
+    form.reset();
+    refreshSelectedEvent();
+  }
+  status('Expense updated.');
 }

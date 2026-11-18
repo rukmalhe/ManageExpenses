@@ -1090,3 +1090,35 @@ footer {
 .event-tabs .quiet {
   padding: 8px 10px;
 }
+
+/* Show the calculated amount before an expense is submitted. */
+.amount-total {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.amount-total[data-kind="error"] {
+  color: #8b2520;
+}
+
+/* Keep cumulative totals beside each event, including unselected events. */
+#event-list .event-name,
+#event-list .event-total,
+#event-list .event-total-label {
+  display: block;
+}
+
+#event-list .event-total {
+  margin-top: 8px;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+#event-list .event-total-label {
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 400;
+}

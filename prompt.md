@@ -15,7 +15,7 @@ Changes
  - auto archive events when you have more than 3 month evennts, - events should be moved to different tab automatically.
  - able to delete travelers and when deleting the total expenses re-adjusted with the team
  - new event type - personal expenses, which don't have travelers, this event type has monthly expenses, only show current month in the list, but user can search old expenses.
- personal expenses has occuring expenses where user can define these occoring expenses with time line. i.e. loan payment from jan 2026 to dec 2027, monthly.
+ Personal expenses support recurring payment schedules with a first payment date and a last payment date. For example, a monthly loan payment from January 2026 through December 2027. Scheduled amounts are calculated for each month; they are not recorded as completed payments.
 
 
  bugs
@@ -27,6 +27,24 @@ Changes
 
 improvements:
   1. Forcus error/acknowlege tosters after the event
-  2. Personal Expenses - Repeat option - month , weekly, fortnighly, once
+  2. Personal expenses: support Once, Monthly, Weekly, and Fortnightly repeat options. Recurring schedules require a first and last payment date. Monthly schedules repeat on the selected day, using the last day of shorter months when necessary. Weekly and fortnightly schedules repeat every 7 or 14 days from the first payment date, including payments on the last payment date.
   3. List expenses group by type, i.e. transport should display together, i have car and bus transport, recurring. should display by group.
   4. active, personal, and archived : pls rename as active -> shared, personal, and archived
+  5. I should able to add amounts like 24.69+56.71+209.67 in the amount field, and it should calculate the total before adding.. 
+  6. Editing saved one-off expenses:
+     - Add Edit next to Delete for saved one-off expenses. Load the expense into the same form so the user can change its amount and date, then Save changes or Cancel edit.
+     - Recurring payment schedules and their generated occurrences cannot be edited after saving. Do not show Edit or Edit schedule controls for them, and reject schedule changes in the application and Firebase rules.
+     - To correct a recurring schedule, delete it and create a replacement. Explain that deleting a schedule removes its calculated amounts from every month, including earlier months. Ask for confirmation before deleting.
+     - Keep recurring and one-off expenses together in their category groups and recalculate monthly and category totals after changes.
+     - Display success or error feedback after saving or deleting. Existing monthly schedules remain compatible.
+  7. Show total expenditure as of today against each event in the Shared, Personal, and Archived event lists.
+     - Total all saved one-off expenses dated on or before the user's local date, across all months. For shared events, show the whole team's total rather than the user's share.
+     - For personal events, also include recurring payments due on or before today, from the start of each schedule. Exclude future one-off expenses and future scheduled occurrences.
+     - Display each total in its event's currency and label it "Total through today". Scheduled amounts are included as due amounts, not confirmed payments.
+     - Update totals when expenses or schedules are added, edited, or deleted, and refresh the date cutoff while the app remains open.
+
+Recurring-payment verification:
+ - Test monthly, weekly, and fortnightly schedules, including month boundaries, leap years, and daylight-saving changes.
+ - Verify recurring schedules can be created and deleted but cannot be modified, including direct database updates by their owner.
+ - Verify saved one-off expenses still support amount and date edits.
+ - Publish the updated database.rules.json when deploying; local emulator tests do not update live Firebase rules.

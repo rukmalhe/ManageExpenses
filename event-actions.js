@@ -42,3 +42,15 @@ export function visibleEvents(cache, uid, tab) {
     return tab !== 'personal';
   });
 }
+
+// Transactions preserve attribution and prevent an edit from recreating a deleted record.
+export async function editExpenseValues(api, db, eventId, collection, key, amount, date) {
+  if (collection !== 'expenses') throw new Error('Recurring payments cannot be edited. Delete the schedule and create a replacement.');
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > 100000000) throw new Error('Enter a valid amount between 0.01 and 1,000,000.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0,10) !== date) throw new Error('Enter a valid date.');
+  const result = await api.runTransaction(api.ref(db, `events/${eventId}/expenses/${key}`), current => {
+    if (current === null) return current;
+    return { ...current, amount, date };
+  }, { applyLocally: false });
+  if (!result.committed || !result.snapshot.exists()) throw new Error('This expense is no longer available.');
+}
