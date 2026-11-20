@@ -1262,3 +1262,62 @@ footer {
 .event-back {
   margin-bottom: 16px;
 }
+
+/* Expense rows: keep the amount above a single, aligned action group. */
+.expense-row {
+  align-items: flex-start;
+}
+
+.expense-description {
+  flex: 1;
+  min-width: 0;
+}
+
+.expense-row > .expense-controls:last-child {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: 10px;
+  max-width: 100%;
+  text-align: right;
+}
+
+.expense-amount {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.expense-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.expense-actions:empty {
+  display: none;
+}
+
+.expense-row .expense-actions .quiet {
+  margin: 0;
+}
+
+/* Very narrow screens put controls below the description without squeezing it. */
+@media (max-width: 360px) {
+  .expense-row {
+    flex-direction: column;
+  }
+
+  .expense-row > .expense-controls:last-child {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+}

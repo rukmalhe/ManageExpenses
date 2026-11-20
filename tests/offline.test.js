@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import Dexie from '../vendor/dexie.mjs';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { OfflineStore } from '../offline-store.js';
 import { FirebaseTransport, SyncEngine, SyncError } from '../sync-engine.js';
@@ -14,9 +15,9 @@ afterEach(async () => { for (const store of databases.splice(0)) { store.db.clos
 function server(initial = null) {
   let record = initial, version = 1, writes = 0, loseResponse = false;
   const fetcher = vi.fn(async (_url, options) => {
-    if (options.method !== 'PUT') return new Response(JSON.stringify(record), { headers: { ETag: `"${version}"` } });
+    if (options.method !== 'PUT' && options.method !== 'DELETE') return new Response(JSON.stringify(record), { headers: { ETag: `"${version}"` } });
     if (options.headers['If-Match'] !== `"${version}"`) return new Response('{}', { status: 412 });
-    record = JSON.parse(options.body); if (typeof record.createdAt === 'object') record.createdAt = 12345;
+    record = options.method === 'DELETE' ? null : JSON.parse(options.body); if (record && typeof record.createdAt === 'object') record.createdAt = 12345;
     version++; writes++;
     if (loseResponse) { loseResponse = false; throw new TypeError('Network response lost'); }
     return new Response(JSON.stringify(record));
@@ -120,4 +121,76 @@ it('starts synchronization for the new account after an in-flight session finish
   uid = 'other'; const newRun = engine.run(); finish();
   await Promise.all([oldRun,newRun]);
   expect(eventIds).toHaveBeenCalledWith('other');
+});
+
+
+describe('deletions while offline or synchronizing', () => {
+  it('persists deletions and immediately removes their amounts from the projected event', async () => {
+    const store=await setup(); await store.queueDelete('owner','trip','meal',expense);
+    expect((await store.events('owner')).trip.expenses.meal).toBeUndefined();
+    expect((await store.changes('owner'))[0]).toMatchObject({kind:'delete',baseline:expense});
+    store.db.close(); const reopened=new OfflineStore(store.db.name); databases.push(reopened);
+    expect((await reopened.events('owner')).trip.expenses.meal).toBeUndefined();
+  });
+  it('cancels a queued creation without creating anything on the server', async () => {
+    const store=await setup(); await store.queue('owner','trip','new',expense);
+    await store.queueDelete('owner','trip','new',expense);
+    const mock=server(), transport=transportFor(mock), change=(await store.changes('owner'))[0];
+    await store.acknowledge(change,await transport.upload(change));
+    expect(mock.writes).toBe(0); expect(await store.changes('owner')).toEqual([]);
+    expect((await store.events('owner')).trip.expenses.new).toBeUndefined();
+  });
+  it('does not drop a deletion queued while its creation was uploading', async () => {
+    const store=await setup(); await store.queue('owner','trip','new',expense);
+    const creation=(await store.changes('owner'))[0];
+    await store.queueDelete('owner','trip','new',expense);
+    const uploaded={...expense,createdAt:12345};
+    await store.acknowledge(creation,uploaded);
+    const deletion=(await store.changes('owner'))[0];
+    expect(deletion).toMatchObject({kind:'delete',baseline:uploaded});
+    expect((await store.events('owner')).trip.expenses.new).toBeUndefined();
+    const mock=server(uploaded); await store.acknowledge(deletion,await transportFor(mock).upload(deletion));
+    expect(mock.record).toBeNull(); expect(await store.changes('owner')).toEqual([]);
+  });
+  it('does not drop a deletion queued while an edit was uploading', async () => {
+    const store=await setup(), edited={...expense,amount:300};
+    await store.queue('owner','trip','meal',edited,expense); const edit=(await store.changes('owner'))[0];
+    await store.queueDelete('owner','trip','meal',edited); await store.acknowledge(edit,edited);
+    expect((await store.changes('owner'))[0]).toMatchObject({kind:'delete',baseline:edited});
+  });
+  it('retries a delete safely after the server committed it but the response was lost', async () => {
+    const mock=server(expense); mock.loseNextResponse(); const transport=transportFor(mock);
+    const change={uid:'owner',eventId:'trip',expenseId:'meal',kind:'delete',baseline:expense,record:expense};
+    await expect(transport.upload(change)).rejects.toThrow('lost');
+    expect(await transport.upload(change)).toBeNull(); expect(mock.writes).toBe(1);
+  });
+  it('requires review before deleting a newer server version', async () => {
+    const mock=server({...expense,amount:500});
+    await expect(transportFor(mock).upload({uid:'owner',eventId:'trip',expenseId:'meal',kind:'delete',baseline:expense,record:expense})).rejects.toMatchObject({kind:'conflict'});
+    expect(mock.record.amount).toBe(500); expect(mock.writes).toBe(0);
+  });
+  it('restores the original expense when a pending deletion is discarded', async () => {
+    const store=await setup(); await store.queueDelete('owner','trip','meal',expense);
+    await store.resolve((await store.changes('owner'))[0],false);
+    expect((await store.events('owner')).trip.expenses.meal).toEqual(expense);
+    expect(await store.changes('owner')).toEqual([]);
+  });
+});
+
+
+it('preserves the previous offline cache and queue while preventing old clients from consuming deletions', async () => {
+  const name=`migration-${crypto.randomUUID()}`, old=new Dexie(name);
+  old.version(1).stores({events:'[uid+id], uid',changes:'[uid+eventId+expenseId], uid',accounts:'uid'});
+  await old.events.put({uid:'owner',id:'trip',data:{expenses:{meal:expense}}});
+  await old.changes.put({uid:'owner',eventId:'trip',expenseId:'new',kind:'create',record:expense,baseline:null,state:'pending',queuedAt:1});
+  old.close();
+  const current=new OfflineStore(name); databases.push(current);
+  expect((await current.events('owner')).trip.expenses.new.amount).toBe(100);
+  await current.queueDelete('owner','trip','meal',expense);
+  await old.open();
+  expect((await old.changes.where('uid').equals('owner').toArray()).map(c=>c.kind)).toEqual(['create']);
+  await current.queueDelete('owner','trip','new',expense);
+  expect(await old.changes.where('uid').equals('owner').toArray()).toEqual([]);
+  expect((await current.changes('owner')).every(c=>c.kind==='delete')).toBe(true);
+  old.close();
 });

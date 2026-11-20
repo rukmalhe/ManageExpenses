@@ -20,7 +20,21 @@ export class FirebaseTransport {
   }
   async eventIds(uid) { return (await (await this.request(`userEvents/${uid}`, {}, uid)).json()) || {}; }
   async event(id, uid) { return (await (await this.request(`events/${id}`, {}, uid)).json()); }
+  async remove({ uid, eventId, collection, key, baseline, record }) {
+    if (!['expenses', 'recurring'].includes(collection)) throw new Error('Invalid record type.');
+    const path = `events/${eventId}/${collection}/${key}`;
+    const response = await this.request(path, { headers: { 'X-Firebase-ETag': 'true' } }, uid);
+    const remote = await response.json();
+    if (remote === null) return null; // Already deleted, including a retry after a lost response.
+    const matchesPending = collection === 'expenses' && record && same(expenseFields(remote), expenseFields(record)) && (!baseline || remote.createdAt === baseline.createdAt);
+    if (!same(remote, baseline) && !matchesPending) throw new SyncError('This expense changed on another device. Keep the server version, review it, and delete again if needed.', 'conflict', remote);
+    const etag = response.headers.get('ETag');
+    if (!etag) throw new SyncError('Could not confirm the saved version before deleting. Try syncing again.', 'retry');
+    await this.request(path, { method: 'DELETE', headers: { 'If-Match': etag } }, uid);
+    return null;
+  }
   async upload(change) {
+    if (change.kind === 'delete') return this.remove({ ...change, collection: 'expenses', key: change.expenseId });
     const path = `events/${change.eventId}/expenses/${change.expenseId}`;
     // Retry a conditional write if the server changed after the GET.
     for (let attempt = 0; attempt < 3; attempt++) {

@@ -72,7 +72,7 @@ Use an installable web app (PWA), preserving the existing application and databa
    - Clearly distinguish saved server data from pending local changes.
 
 4. **Allow offline expense entry**
-   - Queue new one-off expenses and permitted edits locally.
+   - Queue new one-off expenses, permitted edits, and one-off deletions locally. Deletion must work during an in-flight sync and must not be blocked by a disconnected live socket.
    - Preserve pending changes when the app closes.
    - Initially require a connection for traveler management, event deletion, and recurring-schedule changes.
 
@@ -94,3 +94,4 @@ Use an installable web app (PWA), preserving the existing application and databa
    - Test expired sign-ins, revoked event access, and conflicting changes.
 
 **iOS limitation:** plan synchronization while the app is open. Background synchronization after the app closes should not be promised.
+Mobile expense rows: keep the amount aligned above Edit/Delete buttons in a dedicated action group. Buttons must stay aligned and inside the card on narrow screens, with at least 44px touch height. Recurring-schedule deletion remains online-only but uses HTTPS rather than requiring a live socket.

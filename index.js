@@ -236,7 +236,7 @@ function renderEvent() {
       const paid = expenses.filter(([,e]) => e.paidBy === id).reduce((sum,[,e]) => sum + e.amount, 0);
       return `<div class="balance-row"><span>${escapeHTML(member.name)}${id === user.uid ? ' (you)' : ''}${owner ? `<small class="member-account-id">ID: ${escapeHTML(id)}</small>${id !== data.owner ? `<button type="button" class="quiet" data-remove-member="${escapeHTML(id)}">Remove</button>` : ''}` : ''}</span><strong>${money(paid - share(id))}</strong></div>`;
     }).join('')}</div>${owner ? '<form id="member-form"><h3>Add a traveler</h3><button id="repair-access" type="button" class="quiet">Refresh team access</button><label>Name<input name="memberName" required maxlength="80"></label><label>Account ID<input name="memberId" required maxlength="128" pattern="[A-Za-z0-9_-]+"></label><button class="secondary">Add member</button><p class="muted">Use the account ID displayed after the traveler signs in, not their email. Use Refresh team access to restore event listings for existing travelers.</p></form>' : ''}</div></div>
-    <h3 class="table-title">Expense activity</h3><div id="expenses">${expenses.length ? groupedExpenseHTML(expenses, ([id,e]) => `<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${e.pending ? '<span class="pending-label">Pending sync · </span>' : ''}${escapeHTML(e.category)} · ${escapeHTML(e.date)} · ${escapeHTML(data.members[e.paidBy]?.name || 'Traveler')}</small></div><div><strong>${money(e.amount)}</strong>${e.paidBy === user.uid || owner ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(id)}">Edit</button><button class="quiet" data-delete="${escapeHTML(id)}" aria-label="Delete ${escapeHTML(e.description)}">Delete</button>` : ''}</div></div>`) : '<p class="muted">No expenses yet. Start with the first coffee.</p>'}</div>`;
+    <h3 class="table-title">Expense activity</h3><div id="expenses">${expenses.length ? groupedExpenseHTML(expenses, ([id,e]) => `<div class="expense-row"><div class="expense-description"><strong>${escapeHTML(e.description)}</strong><small>${e.pending ? '<span class="pending-label">Pending sync · </span>' : ''}${escapeHTML(e.category)} · ${escapeHTML(e.date)} · ${escapeHTML(data.members[e.paidBy]?.name || 'Traveler')}</small></div><div class="expense-controls"><strong class="expense-amount">${money(e.amount)}</strong><div class="expense-actions">${e.paidBy === user.uid || owner ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(id)}">Edit</button><button class="quiet" data-delete="${escapeHTML(id)}" aria-label="Delete ${escapeHTML(e.description)}">Delete</button>` : ''}</div></div></div>`) : '<p class="muted">No expenses yet. Start with the first coffee.</p>'}</div>`;
   const date = new Date(); date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
   $('#expense-form [name=date]').value = date.toISOString().slice(0,10);
   Object.entries(draft).forEach(([name,value]) => { const input = document.querySelector(`#event-detail [name="${name}"]`); if(input) input.value = value; });
@@ -291,7 +291,7 @@ function renderEvent() {
   document.querySelectorAll('[data-delete]').forEach((button) => button.onclick = () => {
     if (!confirm('Delete this expense?')) return;
     const id = selectedId;
-    perform($('#expenses'), async () => { requireOnline('delete an expense'); await rejectPendingDelete(id, button.dataset.delete); await api.remove(api.ref(db, `events/${id}/expenses/${button.dataset.delete}`)); status('Expense deleted.'); });
+    perform($('#expenses'), async () => { await deleteOneOffExpense(id, button.dataset.delete); });
   });
 }
 initialize().catch((error) => {
@@ -329,9 +329,9 @@ function renderPersonal() {
     <label>Date / first payment<input name="date" type="date" value="${localDate()}" required></label>
     <label>Repeat<select name="repeat"><option value="once">Once</option><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="fortnightly">Fortnightly</option></select></label>
     <label id="repeat-end" hidden>Last payment date<input name="end" type="date"></label><button>Save expense</button></form>
-    <h3>Expenses for ${escapeHTML(personalMonth)}</h3><div id="personal-expenses">${groupedExpenseHTML(entries, ([key,e])=>`<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${e.pending ? '<span class="pending-label">Pending sync · </span>' : ''}${escapeHTML(e.date)} · ${escapeHTML(e.category)}${e.scheduled ? ` · Scheduled ${escapeHTML(e.frequency || 'monthly')}` : ''}</small></div><div>${money(e.amount)} ${!e.scheduled ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(key)}">Edit</button><button class="quiet" data-personal-delete="${escapeHTML(key)}">Delete</button>` : ''}</div></div>`) || '<p class="muted">No expenses this month.</p>'}</div>
+    <h3>Expenses for ${escapeHTML(personalMonth)}</h3><div id="personal-expenses">${groupedExpenseHTML(entries, ([key,e])=>`<div class="expense-row"><div class="expense-description"><strong>${escapeHTML(e.description)}</strong><small>${e.pending ? '<span class="pending-label">Pending sync · </span>' : ''}${escapeHTML(e.date)} · ${escapeHTML(e.category)}${e.scheduled ? ` · Scheduled ${escapeHTML(e.frequency || 'monthly')}` : ''}</small></div><div class="expense-controls"><strong class="expense-amount">${money(e.amount)}</strong><div class="expense-actions">${!e.scheduled ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(key)}">Edit</button><button class="quiet" data-personal-delete="${escapeHTML(key)}">Delete</button>` : ''}</div></div></div>`) || '<p class="muted">No expenses this month.</p>'}</div>
     <h3>Recurring schedules</h3><p class="muted">Recurring payments cannot be edited. To make a correction, delete the schedule and create a replacement. Deleting removes its amounts from every month, including earlier months.</p>
-    ${Object.entries(data.recurring || {}).map(([key,r])=>`<div class="expense-row"><div>${escapeHTML(r.description)}<small>${escapeHTML(r.startDate || r.start)} to ${escapeHTML(r.endDate || r.end)} · ${escapeHTML(r.frequency || 'monthly')} · ${money(r.amount)}</small></div><div><button class="quiet" data-schedule-delete="${escapeHTML(key)}">Delete schedule</button></div></div>`).join('') || '<p class="muted">No recurring schedules.</p>'}`;
+    ${Object.entries(data.recurring || {}).map(([key,r])=>`<div class="expense-row"><div>${escapeHTML(r.description)}<small>${escapeHTML(r.startDate || r.start)} to ${escapeHTML(r.endDate || r.end)} · ${escapeHTML(r.frequency || 'monthly')} · ${money(r.amount)}</small></div><div class="expense-controls"><div class="expense-actions"><button class="quiet" data-schedule-delete="${escapeHTML(key)}">Delete schedule</button></div></div></div>`).join('') || '<p class="muted">No recurring schedules.</p>'}`;
   $('#personal-month').onchange = e => { if (/^\d{4}-\d{2}$/.test(e.target.value)) { personalMonth = e.target.value; renderPersonal(); attachEventDelete(); } };
   const form = $('#personal-form');
   restoreExpenseDraft(form, draft);
@@ -366,7 +366,7 @@ function renderPersonal() {
   }); };
   document.querySelectorAll('[data-personal-delete], [data-schedule-delete]').forEach(b => b.onclick = () => {
     if(!confirm(b.dataset.scheduleDelete ? 'Delete this schedule and its amounts from every month?' : 'Delete this expense?')) return;
-    perform($('#event-detail'), async () => { requireOnline('delete an expense or schedule'); if (b.dataset.personalDelete) await rejectPendingDelete(id, b.dataset.personalDelete); await api.remove(api.ref(db, `events/${id}/${b.dataset.scheduleDelete ? 'recurring/'+b.dataset.scheduleDelete : 'expenses/'+b.dataset.personalDelete}`)); status(b.dataset.scheduleDelete ? 'Recurring schedule deleted.' : 'Expense deleted.'); });
+    perform($('#event-detail'), async () => { if (b.dataset.scheduleDelete) await deleteRecurringSchedule(id, b.dataset.scheduleDelete); else await deleteOneOffExpense(id, b.dataset.personalDelete); });
   });
 }
 
@@ -525,8 +525,8 @@ async function refreshClient(renderDetail = true) {
   await renderSyncPanel();
 }
 function requireOnline(action) {
-  if (!navigator.onLine) throw new Error(`Connect to the internet to ${action}. One-off expenses can be added and edited offline.`);
-  if (!serverConnected) throw new Error('The live connection is reconnecting. You can still sync, add, and edit one-off expenses. Retry this action shortly.');
+  if (!navigator.onLine) throw new Error(`Connect to the internet to ${action}. One-off expenses can be added, edited, and deleted offline.`);
+  if (!serverConnected) throw new Error('The live connection is reconnecting. You can still sync, add, edit, and delete one-off expenses. Retry this action shortly.');
 }
 async function queueExpense(eventId, record) {
   const expenseId = api.push(api.ref(db, `events/${eventId}/expenses`)).key;
@@ -535,9 +535,27 @@ async function queueExpense(eventId, record) {
   await refreshClient(false);
   syncEngine.run();
 }
-async function rejectPendingDelete(eventId, expenseId) {
-  if ((await offline.changes(user.uid)).some(change => change.eventId === eventId && change.expenseId === expenseId)) throw new Error('Sync or resolve this expense’s pending changes before deleting it.');
+async function deleteOneOffExpense(eventId, expenseId) {
+  const record = eventCache[eventId]?.expenses?.[expenseId];
+  if (!record) throw new Error('This expense is no longer available.');
+  await offline.queueDelete(user.uid, eventId, expenseId, record);
+  if (editing?.key === expenseId && editing.eventId === eventId) editing = null;
+  await refreshClient();
+  syncEngine.run();
+  status('Expense removed on this device. Deletion will sync when connected.');
 }
+async function deleteRecurringSchedule(eventId, key) {
+  if (!navigator.onLine) throw new Error('Connect to delete a recurring schedule.');
+  const uid = user.uid, baseline = eventCache[eventId]?.recurring?.[key];
+  if (!baseline) throw new Error('This schedule is no longer available.');
+  await syncEngine.transport.remove({ uid, eventId, collection: 'recurring', key, baseline });
+  const data = await syncEngine.transport.event(eventId, uid);
+  if (data) await offline.saveEvent(uid, eventId, data);
+  await refreshClient();
+  syncEngine.run();
+  status('Recurring schedule deleted.');
+}
+
 async function renderSyncPanel() {
   if (!user) return;
   const uid = user.uid;
@@ -557,7 +575,7 @@ async function renderSyncPanel() {
     row.append(text);
     if (change.state === 'conflict' && change.remote) {
       const compare = document.createElement('p'); compare.className = 'muted';
-      compare.textContent = `Your change: ${(change.record.amount/100).toFixed(2)} on ${change.record.date}. Server: ${(change.remote.amount/100).toFixed(2)} on ${change.remote.date}.`;
+      compare.textContent = `${change.kind === 'delete' ? 'Deletion requested for' : 'Your change:'} ${(change.record.amount/100).toFixed(2)} on ${change.record.date}. Server: ${(change.remote.amount/100).toFixed(2)} on ${change.remote.date}.`;
       row.append(compare);
     }
     const discard = document.createElement('button'); discard.type = 'button'; discard.className = 'quiet';

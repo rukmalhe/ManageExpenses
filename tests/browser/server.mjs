@@ -6,8 +6,9 @@ import { resolve, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 const origin = 'http://127.0.0.1:8766';
 const csp = (await readFile('deploy/Caddyfile.app','utf8')).match(/Content-Security-Policy "([^"]+)"/)[1];
-let events, revoked, offlineMode;
+let events, revoked, offlineMode, uploadHold, releaseUpload, uploadWaiting;
 const seed = () => {
+  releaseUpload?.(); uploadHold=null; releaseUpload=null; uploadWaiting=false;
   revoked = false; offlineMode = false;
   events = {
     trip: { name: 'Shared test trip', type: 'shared', owner: 'owner', currency: 'NZD', createdAt: Date.now(), categories: ['Food'], members: { owner: { name: 'Owner' } }, expenses: { meal: { description: 'Dinner', category: 'Food', amount: 100, date: '2026-11-20', paidBy: 'owner', createdAt: 1 } } },
@@ -63,9 +64,14 @@ const server = http.createServer(async (request, response) => {
         if (action.amount) events.trip.expenses.meal.amount=action.amount;
         if (action.revoke) revoked=true;
         if (action.archive) events.trip.createdAt=1;
+        if (action.personalExpense) events.personal.expenses={ personalMeal:{ description:'Rest of line', category:'Food', amount:2300, date:new Date().toISOString().slice(0,10), paidBy:'owner',createdAt:1 } };
+        if (action.personalExpense) events.personal.currency='LKR';
+        if (action.schedule) events.personal.recurring={ loan:{description:'Loan',category:'Food',amount:100,start:'2026-01',end:'2027-12',day:1,paidBy:'owner',createdAt:1} };
         if ('offline' in action) offlineMode=action.offline;
+        if (action.holdUpload) uploadHold=new Promise(resolve=>releaseUpload=resolve);
+        if (action.releaseUpload) releaseUpload?.();
       }
-      json(events); return;
+      json({...events,__uploadWaiting:uploadWaiting}); return;
     }
     if (offlineMode) { json({ error:'Test network unavailable' },503); return; }
     if (url.pathname.startsWith('/test-db/')) {
@@ -75,14 +81,19 @@ const server = http.createServer(async (request, response) => {
       if (uid !== 'owner' || revoked) { json({ error:'Permission denied' },401); return; }
       const event=events[path[1]];
       if (path.length === 2) { json(event || null); return; }
-      if (path[2] !== 'expenses') { json(null); return; }
-      event.expenses ||= {};
-      const current=event.expenses[path[3]] || null;
+      if (!['expenses','recurring'].includes(path[2])) { json(null); return; }
+      const records=event[path[2]] ||= {};
+      const current=records[path[3]] || null;
       const etag='"'+createHash('sha256').update(JSON.stringify(current)).digest('hex')+'"';
+      if (request.method === 'DELETE') {
+        if (request.headers['if-match'] !== etag) { json({error:'Conflict'},412); return; }
+        delete records[path[3]]; json(null); return;
+      }
       if (request.method === 'PUT') {
+        if (uploadHold) { uploadWaiting=true; await uploadHold; uploadWaiting=false; uploadHold=null; releaseUpload=null; }
         if (request.headers['if-match'] !== etag) { json({ error:'Conflict' },412); return; }
         const value=JSON.parse(body); if (typeof value.createdAt === 'object') value.createdAt=Date.now();
-        event.expenses[path[3]]=value; json(value); return;
+        records[path[3]]=value; json(value); return;
       }
       json(current,200,{ ETag:etag }); return;
     }

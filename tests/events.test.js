@@ -180,3 +180,31 @@ describe('offline queue writes against real Firebase rules', () => {
     expect((await api.get(api.ref(db, `events/${eventId}/expenses/blocked`))).exists()).toBe(false);
   });
 });
+
+
+describe('HTTPS deletions through Firebase rules', () => {
+  const transportFor=uid=>new FirebaseTransport({databaseURL:'http://127.0.0.1:9000?ns=demo-roam',getToken:async()=>createMockUserToken({sub:uid},'demo-roam')});
+  it('deletes an expense conditionally and treats retries as already complete', async () => {
+    const db=env.authenticatedContext('owner').database(), eventId=await createEvent(api,db,'owner',details), transport=transportFor('owner');
+    const record={description:'Meal',category:'Food',amount:100,date:'2026-11-20',paidBy:'owner',createdAt:1};
+    await api.set(api.ref(db,`events/${eventId}/expenses/meal`),record);
+    const change={uid:'owner',eventId,expenseId:'meal',kind:'delete',baseline:record,record};
+    expect(await transport.upload(change)).toBeNull(); expect(await transport.upload(change)).toBeNull();
+    expect((await api.get(api.ref(db,`events/${eventId}/expenses/meal`))).exists()).toBe(false);
+  });
+  it('prevents an ordinary traveler from deleting another payer’s expense', async () => {
+    const db=env.authenticatedContext('owner').database(),eventId=await createEvent(api,db,'owner',details);
+    await addTraveler(api,db,eventId,'owner','traveler','Traveler');
+    const record={description:'Meal',category:'Food',amount:100,date:'2026-11-20',paidBy:'owner',createdAt:1};
+    await api.set(api.ref(db,`events/${eventId}/expenses/meal`),record);
+    await expect(transportFor('traveler').upload({uid:'traveler',eventId,expenseId:'meal',kind:'delete',baseline:record,record})).rejects.toMatchObject({kind:'blocked'});
+    expect((await api.get(api.ref(db,`events/${eventId}/expenses/meal`))).exists()).toBe(true);
+  });
+  it('deletes an immutable recurring schedule without requiring a live SDK connection', async () => {
+    const db=env.authenticatedContext('owner').database(),eventId=await createEvent(api,db,'owner',{...details,type:'personal'});
+    const record={description:'Loan',category:'Food',amount:100,start:'2026-01',end:'2027-12',day:1,paidBy:'owner',createdAt:1};
+    await api.set(api.ref(db,`events/${eventId}/recurring/loan`),record);
+    await transportFor('owner').remove({uid:'owner',eventId,collection:'recurring',key:'loan',baseline:record});
+    expect((await api.get(api.ref(db,`events/${eventId}/recurring/loan`))).exists()).toBe(false);
+  });
+});

@@ -195,3 +195,76 @@ test('does not reopen a panel from an event-card handler created before changing
   await page.evaluate(()=>window.oldCardClick());
   await expect(page.locator('#event-detail')).toBeHidden(); await expect(page.locator('#event-detail')).toBeEmpty();
 });
+
+
+test('aligns mobile expense buttons and deletes personal expenses with the live connection down', async ({ page,request }) => {
+  await request.post('/test-control',{data:{personalExpense:true}});
+  await page.evaluate(()=>localStorage.setItem('fixture-live-disconnected','yes'));
+  await page.reload();
+  await page.locator('#personal-events').tap();
+  await page.locator('#event-list button').filter({hasText:'Personal test event'}).tap();
+  const row=page.locator('#personal-expenses .expense-row').filter({hasText:'Rest of line'});
+  await expect(row).toBeVisible();
+  for (const width of [393,320]) {
+    await page.setViewportSize({width,height:844});
+    const edit=await row.getByRole('button',{name:'Edit',exact:true}).boundingBox();
+    const remove=await row.getByRole('button',{name:'Delete',exact:true}).boundingBox();
+    const panel=await page.locator('#event-detail').boundingBox();
+    expect(Math.abs(edit.y-remove.y)).toBeLessThan(2);
+    expect(remove.x).toBeGreaterThanOrEqual(edit.x+edit.width);
+    expect(edit.height).toBeGreaterThanOrEqual(44); expect(remove.height).toBeGreaterThanOrEqual(44);
+    expect(remove.x+remove.width).toBeLessThanOrEqual(panel.x+panel.width);
+    expect(await page.evaluate(()=>document.body.scrollWidth<=innerWidth)).toBe(true);
+    if (width===393) await row.screenshot({path:test.info().outputPath('mobile-expense-actions.png')});
+  }
+  page.once('dialog',dialog=>dialog.accept());
+  await row.getByRole('button',{name:'Delete',exact:true}).tap();
+  await expect(row).toHaveCount(0);
+  await expect(page.locator('#sync-detail')).toContainText('0 pending changes');
+  expect((await (await request.get('/test-control')).json()).personal.expenses.personalMeal).toBeUndefined();
+});
+
+test('deletes an expense while its creation upload is still in progress', async ({ page,request }) => {
+  await page.locator('#event-list button').filter({hasText:'Shared test trip'}).tap();
+  await request.post('/test-control',{data:{holdUpload:true}});
+  await page.locator('#expense-form [name="description"]').fill('Delete during upload');
+  await page.locator('#expense-form [name="amount"]').fill('7.25');
+  await page.locator('#expense-form button').filter({hasText:'Add expense'}).click();
+  await expect.poll(async()=> (await (await request.get('/test-control')).json()).__uploadWaiting).toBe(true);
+  const row=page.locator('#expenses .expense-row').filter({hasText:'Delete during upload'});
+  page.once('dialog',dialog=>dialog.accept());
+  await row.getByRole('button',{name:'Delete Delete during upload',exact:true}).click();
+  await expect(row).toHaveCount(0);
+  await request.post('/test-control',{data:{releaseUpload:true}});
+  await expect(page.locator('#sync-detail')).toContainText('0 pending changes');
+  const data=await (await request.get('/test-control')).json();
+  expect(Object.values(data.trip.expenses).filter(e=>e.description==='Delete during upload')).toHaveLength(0);
+});
+
+test('keeps an offline deletion through reload and applies it once after reconnecting', async ({ page,context,request }) => {
+  await page.locator('#event-list button').filter({hasText:'Shared test trip'}).tap();
+  await setOffline(context,page,request,true);
+  page.once('dialog',dialog=>dialog.accept());
+  await page.locator('[data-delete="meal"]').click();
+  await expect(page.locator('[data-delete="meal"]')).toHaveCount(0);
+  await expect(page.locator('#sync-detail')).toContainText('1 pending change');
+  await page.goto('/?offline-delete-reopen=1');
+  await page.locator('#event-list button').filter({hasText:'Shared test trip'}).tap();
+  await expect(page.locator('[data-delete="meal"]')).toHaveCount(0);
+  await setOffline(context,page,request,false);
+  await expect(page.locator('#sync-detail')).toContainText('0 pending changes');
+  expect((await (await request.get('/test-control')).json()).trip.expenses.meal).toBeUndefined();
+});
+
+test('deletes recurring schedules over HTTPS while the live connection is unavailable', async ({ page,request }) => {
+  await request.post('/test-control',{data:{schedule:true}});
+  await page.evaluate(()=>localStorage.setItem('fixture-live-disconnected','yes'));
+  await page.reload();
+  await page.locator('#personal-events').tap();
+  await page.locator('#event-list button').filter({hasText:'Personal test event'}).tap();
+  const button=page.locator('[data-schedule-delete="loan"]');
+  await expect(button).toBeVisible();
+  page.once('dialog',dialog=>dialog.accept()); await button.click();
+  await expect(button).toHaveCount(0);
+  expect((await (await request.get('/test-control')).json()).personal.recurring.loan).toBeUndefined();
+});
