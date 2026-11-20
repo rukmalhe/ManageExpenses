@@ -1242,3 +1242,23 @@ footer {
     overflow-y: auto;
   }
 }
+
+/* Show only event summaries until a user explicitly opens an event. */
+.workspace:not(.has-event) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace:not(.has-event) #event-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 12px;
+}
+
+.workspace:not(.has-event) #event-list button {
+  width: 100%;
+  margin: 0;
+}
+
+.event-back {
+  margin-bottom: 16px;
+}

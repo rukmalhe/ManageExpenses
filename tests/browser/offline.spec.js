@@ -131,3 +131,36 @@ test('sync stays available when the live socket is disconnected but internet req
   await expect(page.locator('#sync-detail')).toContainText('0 pending changes');
   await expect(page.locator('#sync-state')).toHaveText('Synced');
 });
+
+test('keeps details empty until selection and clears them on tab changes, closing, and reload', async ({ page }) => {
+  const detail=page.locator('#event-detail');
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+  await page.locator('#event-list button').filter({hasText:'Shared test trip'}).click();
+  await expect(detail).toBeVisible(); await expect(detail).toContainText('Shared test trip');
+  await page.locator('#personal-events').click();
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+  await page.locator('#sync-now').click();
+  await expect(page.locator('#sync-state')).toHaveText('Synced');
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+  await page.locator('#event-list button').filter({hasText:'Personal test event'}).click();
+  await expect(detail).toBeVisible(); await expect(detail).toContainText('Personal test event');
+  await page.getByRole('button',{name:'Back to events'}).click();
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+  await page.locator('#sync-now').click();
+  await expect(page.locator('#sync-state')).toHaveText('Synced');
+  await expect(detail).toBeHidden();
+  await page.reload(); await expect(page.locator('#sync-state')).toHaveText('Synced');
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+});
+
+test('clears an open detail panel when background sync moves the event to Archived', async ({ page,request }) => {
+  await page.locator('#event-list button').filter({hasText:'Shared test trip'}).click();
+  await expect(page.locator('#event-detail')).toBeVisible();
+  await request.post('/test-control',{data:{archive:true}});
+  await page.locator('#sync-now').click();
+  await expect(page.locator('#event-detail')).toBeHidden(); await expect(page.locator('#event-detail')).toBeEmpty();
+  await page.locator('#archived-events').click();
+  await expect(page.locator('#event-detail')).toBeHidden();
+  await page.locator('#event-list button').filter({hasText:'Shared test trip'}).click();
+  await expect(page.locator('#event-detail')).toBeVisible();
+});

@@ -35,7 +35,10 @@ function localDate() { const d = new Date(); d.setMinutes(d.getMinutes() - d.get
 function isArchived(data) { const cutoff = new Date(data.createdAt); const day = cutoff.getDate(); cutoff.setDate(1); cutoff.setMonth(cutoff.getMonth()+3); const end = new Date(cutoff.getFullYear(), cutoff.getMonth()+1, 0).getDate(); cutoff.setDate(Math.min(day,end)); return data.type !== "personal" && Date.now() >= cutoff.getTime(); }
 function renderEventList() {
   $("#event-list").replaceChildren();
-  visibleEvents(eventCache, user?.uid, eventTab).filter(([,d]) => eventTab === "personal" || isArchived(d) === (eventTab === "archived")).forEach(([id,d]) => {
+  const events = visibleEvents(eventCache, user?.uid, eventTab).filter(([,d]) => eventTab === "personal" || isArchived(d) === (eventTab === "archived"));
+  // A selection belongs to the visible tab, not to the last downloaded event.
+  if (selectedId && !events.some(([id]) => id === selectedId)) clearSelectedEvent(false);
+  events.forEach(([id,d]) => {
     const b = document.createElement('button');
     b.dataset.id = id;
     b.setAttribute('aria-pressed', String(id === selectedId));
@@ -50,7 +53,7 @@ function renderEventList() {
   });
   if (!$("#event-list").children.length) $("#event-list").textContent = "No " + (eventTab === "active" ? "shared" : eventTab) + " events.";
 }
-["active", "archived", "personal"].forEach(tab => $("#"+tab+"-events").onclick = () => { eventTab = tab; ["active", "archived", "personal"].forEach(t => $("#"+t+"-events").setAttribute("aria-pressed", String(t === tab))); renderEventList(); });
+["active", "archived", "personal"].forEach(tab => $("#"+tab+"-events").onclick = () => { eventTab = tab; clearSelectedEvent(false); ["active", "archived", "personal"].forEach(t => $("#"+t+"-events").setAttribute("aria-pressed", String(t === tab))); renderEventList(); });
 setInterval(() => { renderEventList(); }, 60000);
 const money = (cents) => new Intl.NumberFormat(undefined, { style: 'currency', currency: eventData.currency }).format(cents / 100);
 async function perform(form, action) {
@@ -180,13 +183,24 @@ $('#event-form').addEventListener('submit', (event) => {
     status(type === 'personal' ? 'Personal event created. Only you can access these expenses.' : 'Event created. Add travelers using their account IDs.');
   });
 });
+function clearSelectedEvent(renderList = true) {
+  stopEvent();
+  selectedId = null; eventData = null; editing = null;
+  const detail = $('#event-detail');
+  detail.replaceChildren(); detail.hidden = true;
+  $('.workspace').classList.remove('has-event');
+  $('.account-id').hidden = eventTab === 'personal';
+  if (renderList) renderEventList();
+}
 function selectEvent(id) {
   editing = null; selectedId = id; personalMonth = localDate().slice(0,7);
   eventData = eventCache[id];
   renderEventList();
-  if (eventData) { $('.account-id').hidden = eventData.type === 'personal'; refreshSelectedEvent(); }
-  else $('#event-detail').textContent = 'Connect to download this event first.';
+  if (!selectedId || !eventData) { clearSelectedEvent(); return; }
+  $('.account-id').hidden = eventData.type === 'personal';
+  refreshSelectedEvent();
 }
+
 function renderEvent() {
   // Keep entered text intact when another member adds an expense.
   const draft = {};
@@ -375,8 +389,19 @@ function restoreExpenseDraft(form, draft) {
   Object.entries(draft).forEach(([name, value]) => { if (form.elements[name]) form.elements[name].value = value; });
 }
 function refreshSelectedEvent() {
+  if (!selectedId || !eventData || !eventCache[selectedId]) { clearSelectedEvent(false); return; }
+  $('#event-detail').hidden = false;
+  $('.workspace').classList.add('has-event');
   if (eventData.type === 'personal') renderPersonal(); else renderEvent();
   attachEventDelete();
+  const back = document.createElement('button');
+  back.type = 'button'; back.className = 'quiet event-back'; back.textContent = '← Back to events';
+  back.onclick = () => {
+    const id = selectedId;
+    clearSelectedEvent();
+    [...document.querySelectorAll('#event-list button')].find(button => button.dataset.id === id)?.focus();
+  };
+  $('#event-detail').prepend(back);
 }
 function configureExpenseEditor(form) {
   if (!editing || editing.eventId !== selectedId) return;
@@ -439,7 +464,7 @@ async function loadSession(nextUser) {
   $('.account-id').hidden = false;
   $('#auth-panel').hidden = !!user; $('#app').hidden = !user; $('#account').hidden = !user;
   $('#event-list').replaceChildren(); $('#sync-issues').replaceChildren(); $('#sync-issues').hidden = true;
-  $('#event-detail').innerHTML = '<div class="empty"><h2>Select an event to get started</h2><p>Cached events are available offline after the first download.</p></div>';
+  clearSelectedEvent(false);
   if (!user) { if (!navigator.onLine) status('Connect to sign in. First setup requires an internet connection.', 'error'); return; }
   const uid = user.uid;
   $('#sync-state').textContent = 'Loading saved events…';
@@ -480,7 +505,7 @@ async function refreshClient(renderDetail = true) {
   if (selectedId) {
     eventData = eventCache[selectedId];
     if (eventData && renderDetail) refreshSelectedEvent();
-    else if (!eventData) { editing = null; $('#event-detail').textContent = 'This event is no longer available. Connect to check your access.'; }
+    else if (!eventData) clearSelectedEvent(false);
   }
   await renderSyncPanel();
 }

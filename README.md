@@ -75,3 +75,5 @@ Browser-test note: WebKit’s Playwright offline toggle bypasses service-worker 
 Builds use a shared release identifier in static-asset URLs to avoid mixing versions in the CDN cache. Online navigation checks the latest HTML; disconnected navigation falls back to the last completely installed app shell.
 
 The Offline label follows the device network state, not Firebase’s live socket. Manual and automatic REST synchronization continue when the live connection is reconnecting; the app polls for server changes while that live connection is unavailable. Management actions still wait for a live connection.
+
+The event list starts without a selection and uses the full workspace width. Details open only after selecting an event. Switching tabs or choosing Back to events clears and hides the panel; synchronization and event removal never reopen a previous selection.

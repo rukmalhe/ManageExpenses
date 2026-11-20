@@ -24,6 +24,8 @@ Changes
  3. Personal Expenses shown with travel members, it should be personal, not showing to others, they can create their own one.
  4. duplicate account id, no warning message
 
+ 5. Event details must remain empty and hidden until the user selects an event. Switching tabs, returning to summaries, signing out, or losing access must clear the previous selection. Background sync must not reopen it. Provide Back to events, especially for mobile.
+
 
 improvements:
   1. Forcus error/acknowlege tosters after the event

@@ -62,6 +62,7 @@ const server = http.createServer(async (request, response) => {
         const action=JSON.parse(body); if (action.reset) seed();
         if (action.amount) events.trip.expenses.meal.amount=action.amount;
         if (action.revoke) revoked=true;
+        if (action.archive) events.trip.createdAt=1;
         if ('offline' in action) offlineMode=action.offline;
       }
       json(events); return;
