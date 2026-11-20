@@ -26,6 +26,7 @@ const status = (message = '', kind = 'success') => {
 const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let user, db, auth, api, selectedId, eventData;
 let editing = null;
+let selectedTab = null, selectionGeneration = 0;
 const offline = new OfflineStore();
 let syncEngine, serverConnected = false, syncState = 'offline', syncError = '', sessionVersion = 0, viewVersion = 0;
 let stopIndex = () => {}, stopEvent = () => {};
@@ -37,7 +38,7 @@ function renderEventList() {
   $("#event-list").replaceChildren();
   const events = visibleEvents(eventCache, user?.uid, eventTab).filter(([,d]) => eventTab === "personal" || isArchived(d) === (eventTab === "archived"));
   // A selection belongs to the visible tab, not to the last downloaded event.
-  if (selectedId && !events.some(([id]) => id === selectedId)) clearSelectedEvent(false);
+  if (selectedId && (selectedTab !== eventTab || !events.some(([id]) => id === selectedId))) clearSelectedEvent(false);
   events.forEach(([id,d]) => {
     const b = document.createElement('button');
     b.dataset.id = id;
@@ -48,12 +49,25 @@ function renderEventList() {
     const label = document.createElement('small'); label.className = 'event-total-label'; label.textContent = 'Total through today';
     if (d.type === 'personal') label.title = 'Includes recurring payments due through today, not confirmed payments.';
     b.append(name, total, label);
-    b.onclick = () => selectEvent(id);
+    const tab = eventTab, generation = selectionGeneration;
+    b.onclick = () => {
+      if (tab === eventTab && generation === selectionGeneration) selectEvent(id);
+    };
     $('#event-list').append(b);
   });
   if (!$("#event-list").children.length) $("#event-list").textContent = "No " + (eventTab === "active" ? "shared" : eventTab) + " events.";
 }
-["active", "archived", "personal"].forEach(tab => $("#"+tab+"-events").onclick = () => { eventTab = tab; clearSelectedEvent(false); ["active", "archived", "personal"].forEach(t => $("#"+t+"-events").setAttribute("aria-pressed", String(t === tab))); renderEventList(); });
+function switchEventTab(tab) {
+  eventTab = tab;
+  clearSelectedEvent(false);
+  for (const name of ['active', 'personal', 'archived']) {
+    $('#'+name+'-events').setAttribute('aria-pressed', String(name === tab));
+  }
+  renderEventList();
+}
+for (const tab of ['active', 'personal', 'archived']) {
+  $('#'+tab+'-events').onclick = () => switchEventTab(tab);
+}
 setInterval(() => { renderEventList(); }, 60000);
 const money = (cents) => new Intl.NumberFormat(undefined, { style: 'currency', currency: eventData.currency }).format(cents / 100);
 async function perform(form, action) {
@@ -185,7 +199,8 @@ $('#event-form').addEventListener('submit', (event) => {
 });
 function clearSelectedEvent(renderList = true) {
   stopEvent();
-  selectedId = null; eventData = null; editing = null;
+  selectedId = null; selectedTab = null; eventData = null; editing = null;
+  selectionGeneration++;
   const detail = $('#event-detail');
   detail.replaceChildren(); detail.hidden = true;
   $('.workspace').classList.remove('has-event');
@@ -193,7 +208,7 @@ function clearSelectedEvent(renderList = true) {
   if (renderList) renderEventList();
 }
 function selectEvent(id) {
-  editing = null; selectedId = id; personalMonth = localDate().slice(0,7);
+  editing = null; selectedId = id; selectedTab = eventTab; personalMonth = localDate().slice(0,7);
   eventData = eventCache[id];
   renderEventList();
   if (!selectedId || !eventData) { clearSelectedEvent(); return; }
@@ -389,7 +404,7 @@ function restoreExpenseDraft(form, draft) {
   Object.entries(draft).forEach(([name, value]) => { if (form.elements[name]) form.elements[name].value = value; });
 }
 function refreshSelectedEvent() {
-  if (!selectedId || !eventData || !eventCache[selectedId]) { clearSelectedEvent(false); return; }
+  if (!selectedId || selectedTab !== eventTab || !eventData || !eventCache[selectedId] || (eventData.type === 'personal') !== (eventTab === 'personal')) { clearSelectedEvent(false); return; }
   $('#event-detail').hidden = false;
   $('.workspace').classList.add('has-event');
   if (eventData.type === 'personal') renderPersonal(); else renderEvent();

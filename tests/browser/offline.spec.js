@@ -164,3 +164,34 @@ test('clears an open detail panel when background sync moves the event to Archiv
   await page.locator('#event-list button').filter({hasText:'Shared test trip'}).click();
   await expect(page.locator('#event-detail')).toBeVisible();
 });
+
+
+test('touch switching clears the last event in both directions, including while sync is running', async ({ page }) => {
+  const detail=page.locator('#event-detail');
+  await page.locator('#event-list button').filter({hasText:'Shared test trip'}).tap();
+  await expect(detail).toContainText('Shared test trip');
+  await page.locator('#personal-events').tap();
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+  await page.locator('#event-list button').filter({hasText:'Personal test event'}).tap();
+  await expect(detail).toContainText('Personal test event');
+  await page.locator('#active-events').tap();
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+  await expect(page.locator('#event-list button[aria-pressed="true"]')).toHaveCount(0);
+  await page.locator('#personal-events').tap();
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+  await page.locator('#event-list button').filter({hasText:'Personal test event'}).tap();
+  await page.locator('#sync-now').tap();
+  await page.locator('#active-events').tap();
+  await expect(page.locator('#sync-state')).toHaveText('Synced');
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+  await page.locator('#personal-events').tap();
+  await expect(detail).toBeHidden(); await expect(detail).toBeEmpty();
+});
+
+test('does not reopen a panel from an event-card handler created before changing tabs', async ({ page }) => {
+  await page.locator('#event-list button').filter({hasText:'Shared test trip'}).evaluate(button => { window.oldCardClick=button.onclick; });
+  await page.locator('#personal-events').tap();
+  await page.locator('#active-events').tap();
+  await page.evaluate(()=>window.oldCardClick());
+  await expect(page.locator('#event-detail')).toBeHidden(); await expect(page.locator('#event-detail')).toBeEmpty();
+});
