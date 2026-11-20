@@ -1,3 +1,5 @@
+import { FirebaseTransport } from '../sync-engine.js';
+import { createMockUserToken } from '@firebase/util';
 import { readFile } from 'node:fs/promises';
 import { beforeAll, afterAll, beforeEach, describe, it, expect } from 'vitest';
 import { initializeTestEnvironment, assertFails } from '@firebase/rules-unit-testing';
@@ -152,5 +154,29 @@ describe('editing saved expenses', () => {
     expect((await api.get(schedule)).exists()).toBe(false);
     await api.set(schedule, { ...record, amount: 200 });
     expect((await api.get(schedule)).val().amount).toBe(200);
+  });
+});
+
+
+describe('offline queue writes against real Firebase rules', () => {
+  const transportFor = uid => new FirebaseTransport({ databaseURL: 'http://127.0.0.1:9000?ns=demo-roam', getToken: async () => createMockUserToken({ sub: uid }, 'demo-roam') });
+  it('uses stable conditional creates and edits without duplicate writes', async () => {
+    const db = env.authenticatedContext('owner').database();
+    const eventId = await createEvent(api, db, 'owner', details);
+    const transport = transportFor('owner');
+    const record = { description: 'Offline meal', category: 'Food', amount: 8140, date: '2026-11-20', paidBy: 'owner', createdAt: 1 };
+    const change = { uid: 'owner', eventId, expenseId: 'stable-offline-id', kind: 'create', record };
+    const saved = await transport.upload(change);
+    expect(saved.createdAt).toBeGreaterThan(1);
+    expect(await transport.upload(change)).toEqual(saved);
+    const edited = await transport.upload({ ...change, kind: 'edit', baseline: saved, record: { ...saved, amount: 29107, date: '2026-11-21' } });
+    expect(edited).toEqual({ ...saved, amount: 29107, date: '2026-11-21' });
+    expect(Object.keys((await api.get(api.ref(db, `events/${eventId}/expenses`))).val())).toEqual(['stable-offline-id']);
+  });
+  it('blocks queued uploads when membership has been revoked', async () => {
+    const db = env.authenticatedContext('owner').database();
+    const eventId = await createEvent(api, db, 'owner', details);
+    await expect(transportFor('outsider').upload({ uid:'outsider', eventId, expenseId:'blocked', kind:'create', record:{ description:'Meal', category:'Food', amount:100, date:'2026-11-20', paidBy:'outsider', createdAt:1 } })).rejects.toMatchObject({ kind:'blocked' });
+    expect((await api.get(api.ref(db, `events/${eventId}/expenses/blocked`))).exists()).toBe(false);
   });
 });

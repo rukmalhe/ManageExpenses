@@ -4,7 +4,7 @@ This app is static. Your server hosts the interface; Firebase continues to store
 
 ## Environment and build
 
-Use Node 22 or later locally or in your deployment build environment:
+Use Node 24.12 or later and npm 11 or later locally or in your deployment build environment:
 
 ```sh
 node --env-file=.env scripts/build.mjs
@@ -68,3 +68,9 @@ The front Caddy file is `/Users/rukmal/platform/caddy/Caddyfile`. For the existi
 Validate the front Caddy file before reloading. A working internal route does not establish that public DNS, tunnel routing, HTTPS, or Google sign-in are configured.
 
 Rollback this app with `docker compose down` in the installation folder and remove only its front-Caddy site block, then validate and reload Caddy. Firebase event and expense data remain in Firebase and are not deleted by stopping the container.
+
+## PWA deployment
+
+Run `npm ci` before building so the browser copy of Dexie is prepared. Serve the complete `dist/` directory, including `service-worker.js`, `manifest.webmanifest`, `vendor/`, and `icons/`. HTTPS is required except on localhost. Keep the existing no-cache response header; the service worker manages versioned app-shell caches. The manifest and service worker assume this app is hosted at the origin root.
+
+Offline sync uses the existing Firebase Authentication and Realtime Database rules. It does not require a database migration or an additional backend. Initial setup and sign-in require a connection; cached accounts and downloaded events can then be used offline. Test the first installation online, an offline restart, queued additions and edits, reconnection, conflicts, and sign-out with pending changes before broad rollout. An installed older version shows Update app when its replacement is downloaded.

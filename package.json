@@ -5,7 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "firebase emulators:exec --project demo-roam --only database \"vitest run\"",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "postinstall": "node scripts/prepare-vendor.mjs",
+    "pretest": "node scripts/prepare-vendor.mjs",
+    "test:browser": "playwright test"
   },
   "keywords": [],
   "author": "",
@@ -14,8 +17,17 @@
   "private": true,
   "devDependencies": {
     "@firebase/rules-unit-testing": "^6.0.0",
+    "@playwright/test": "1.56.1",
+    "fake-indexeddb": "^6.2.8",
     "firebase": "^13.3.0",
     "firebase-tools": "^15.36.0",
     "vitest": "^4.1.12"
+  },
+  "dependencies": {
+    "dexie": "^4.4.7"
+  },
+  "engines": {
+    "node": ">=24.12.0",
+    "npm": ">=11"
   }
 }

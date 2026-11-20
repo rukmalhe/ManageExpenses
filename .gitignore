@@ -22,3 +22,10 @@ coverage/
 # macOS Finder metadata.
 .DS_Store
 ._*
+
+# Browser copy of the installed IndexedDB library (generated during build).
+vendor/
+
+# Browser test artifacts.
+test-results/
+playwright-report/

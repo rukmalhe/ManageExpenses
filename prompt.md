@@ -48,3 +48,47 @@ Recurring-payment verification:
  - Verify recurring schedules can be created and deleted but cannot be modified, including direct database updates by their owner.
  - Verify saved one-off expenses still support amount and date edits.
  - Publish the updated database.rules.json when deploying; local emulator tests do not update live Firebase rules.
+
+
+8. iOS-friendly client app with offline use and synchronization. Implemented as a PWA using the existing interface and Firebase database; device acceptance testing remains required.
+
+Use an installable web app (PWA), preserving the existing application and database.
+
+1. **Design the mobile interface**
+   - Use a single-column layout with large touch controls.
+   - Make event navigation, expense entry, and totals easy to use on small screens.
+   - Support iPhone safe areas and the on-screen keyboard.
+
+2. **Support installation**
+   - Allow installation through Safari’s **Add to Home Screen**.
+   - Require an internet connection for the first setup, sign-in, and initial download.
+   - Cache the application so it can reopen offline.
+
+3. **Store data locally**
+   - Save downloaded events and expenses in account-scoped IndexedDB stores using Dexie.
+   - Show the last successful synchronization time.
+   - Clearly distinguish saved server data from pending local changes.
+
+4. **Allow offline expense entry**
+   - Queue new one-off expenses and permitted edits locally.
+   - Preserve pending changes when the app closes.
+   - Initially require a connection for traveler management, event deletion, and recurring-schedule changes.
+
+5. **Add synchronization**
+   - Synchronize automatically when the app opens or regains a connection.
+   - Provide a **Sync now** button while online.
+   - Show Offline, Syncing, Synced, and Sync failed states.
+   - Prevent duplicate expenses when retrying uploads by keeping a stable expense ID and using conditional server writes.
+
+6. **Handle conflicts and account security**
+   - Detect when another device has edited or deleted the same expense.
+   - Ask the user to resolve conflicting edits.
+   - Recheck Firebase permissions during synchronization.
+   - Keep each account’s cached data separate and handle pending changes before sign-out.
+
+7. **Test on iPhones**
+   - Test installation, airplane mode, reopening offline, reconnection, and manual synchronization.
+   - Verify queued expenses upload exactly once.
+   - Test expired sign-ins, revoked event access, and conflicting changes.
+
+**iOS limitation:** plan synchronization while the app is open. Background synchronization after the app closes should not be promised.

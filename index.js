@@ -1,5 +1,7 @@
+import { OfflineStore } from './offline-store.js';
+import { FirebaseTransport, SyncEngine } from './sync-engine.js';
 import { monthlyEntries, groupExpenses, parseExpenseAmount, expenditureThroughDate } from './expense-utils.js';
-import { createEvent, removeTraveler, addTraveler, visibleEvents, editExpenseValues } from './event-actions.js';
+import { createEvent, removeTraveler, addTraveler, visibleEvents } from './event-actions.js';
 // Firebase web configuration. These identify the project; database rules control access.
 import { firebaseConfig } from './firebase-config.js';
 
@@ -24,6 +26,8 @@ const status = (message = '', kind = 'success') => {
 const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let user, db, auth, api, selectedId, eventData;
 let editing = null;
+const offline = new OfflineStore();
+let syncEngine, serverConnected = false, syncState = 'offline', syncError = '', sessionVersion = 0, viewVersion = 0;
 let stopIndex = () => {}, stopEvent = () => {};
 let eventListeners = [];
 let eventTab = "active", eventCache = {}, personalMonth = localDate().slice(0,7);
@@ -75,33 +79,33 @@ async function initialize() {
   $('#google-signin').disabled = false;
   $('#google-signin').textContent = 'Sign in with Google';
   status();
-  api.onAuthStateChanged(auth, (nextUser) => {
-    stopIndex(); stopEvent(); eventListeners.forEach((off) => off()); eventListeners = [];
-    selectedId = null; eventData = null; editing = null; eventCache = {}; user = nextUser;
-    $(".account-id").hidden = false;
-    $('#auth-panel').hidden = !!user; $('#app').hidden = !user; $('#account').hidden = !user;
-    $('#event-list').replaceChildren();
-    $('#event-detail').innerHTML = '<div class="empty"><h2>Select an event to get started</h2><p>Create your first event or ask an organizer to add you.</p></div>';
-    if (!user) return;
-    $('#identity').textContent = user.email;
-    $('#uid').textContent = user.uid;
-    stopIndex = api.onValue(api.ref(db, `userEvents/${user.uid}`), (snapshot) => {
-      eventListeners.forEach((off) => off()); eventListeners = [];
-      $('#event-list').replaceChildren();
-      const ids = Object.keys(snapshot.val() || {});
-      if (!ids.length) $('#event-list').textContent = 'No events yet.';
-      eventCache = {}; renderEventList();
-      ids.forEach((id) => {
-        eventListeners.push(api.onValue(api.ref(db, `events/${id}`), (s) => {
-          if (s.exists()) eventCache[id] = s.val(); else delete eventCache[id];
-          renderEventList();
-        }, (error) => { delete eventCache[id]; renderEventList(); status(error.message, 'error'); }));
-      });
-    }, (error) => status(error.message, 'error'));
+  await api.setPersistence(auth, api.indexedDBLocalPersistence);
+  syncEngine = new SyncEngine({ store: offline,
+    transport: new FirebaseTransport({ databaseURL: firebaseConfig.databaseURL, getToken: async uid => {
+      const account = auth.currentUser;
+      if (account?.uid !== uid) return null;
+      const token = await account.getIdToken();
+      return auth.currentUser?.uid === uid ? token : null;
+    } }),
+    getUid: () => user?.uid,
+    isOnline: () => navigator.onLine && serverConnected,
+    onChange: (state, message) => {
+      if (syncEngine?.activeUid !== user?.uid) return;
+      if (state !== 'refresh') { syncState = state; syncError = message || ''; }
+      refreshClient().catch(error => status(error.message, 'error'));
+    }
   });
+  api.onValue(api.ref(db, '.info/connected'), snapshot => {
+    serverConnected = !!snapshot.val();
+    renderSyncPanel().catch(error => status(error.message, 'error'));
+    if (serverConnected && user) syncEngine.run();
+  });
+  api.onAuthStateChanged(auth, nextUser => loadSession(nextUser).catch(error => status(`Local storage is unavailable: ${error.message}. Allow website storage and reload.`, 'error')));
+
 }
 
 $('#google-signin').onclick = () => perform($('#auth-form'), async () => {
+  if (!navigator.onLine) throw new Error('Connect to the internet to sign in.');
   if (!auth) throw new Error('Firebase is still loading. Please try again shortly.');
   const provider = new api.GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
@@ -130,14 +134,19 @@ $('#auth-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const action = event.submitter.value;
   perform(event.currentTarget, async () => {
-    if (!auth) throw new Error('Firebase is still loading. Please try again shortly.');
+    if (!navigator.onLine) throw new Error('Connect to the internet to sign in.');
+  if (!auth) throw new Error('Firebase is still loading. Please try again shortly.');
     const email = $('#email').value.trim(); const password = $('#password').value;
     if (action === 'register') await api.createUserWithEmailAndPassword(auth, email, password);
     else await api.signInWithEmailAndPassword(auth, email, password);
     $('#password').value = ''; status();
   });
 });
-$('#logout').onclick = () => perform($('#account'), () => api.signOut(auth));
+$('#logout').onclick = () => perform($('#account'), async () => {
+  const changes = await offline.changes(user.uid);
+  if (changes.length && !confirm(`${changes.length} unsynced change(s) remain on this device. Sign out? They will sync only after you sign back into this same account.`)) return;
+  await api.signOut(auth);
+});
 $('#copy-id').onclick = async () => {
   try { await navigator.clipboard.writeText(user.uid); status('Account ID copied.'); }
   catch { status('Select and copy the account ID displayed above.'); }
@@ -154,6 +163,7 @@ $('#event-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   perform(form, async () => {
+    requireOnline('create an event');
     const values = new FormData(form);
     const name = values.get('name').trim();
     const categories = [...new Set(values.get('categories').split(',').map((c) => c.trim()).filter(Boolean))];
@@ -166,14 +176,11 @@ $('#event-form').addEventListener('submit', (event) => {
   });
 });
 function selectEvent(id) {
-  stopEvent(); editing = null; selectedId = id; personalMonth = localDate().slice(0,7);
-  document.querySelectorAll('#event-list button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.id === id)));
-  $('#event-detail').textContent = 'Loading event…';
-  stopEvent = api.onValue(api.ref(db, `events/${id}`), (snapshot) => {
-    eventData = snapshot.val();
-    if (eventData) { $(".account-id").hidden = eventData.type === "personal"; if (eventData.type === "personal") renderPersonal(); else renderEvent(); attachEventDelete(); }
-    else $('#event-detail').textContent = 'This event is unavailable.';
-  }, (error) => { $('#event-detail').textContent = 'Could not load this event.'; status(error.message, 'error'); });
+  editing = null; selectedId = id; personalMonth = localDate().slice(0,7);
+  eventData = eventCache[id];
+  renderEventList();
+  if (eventData) { $('.account-id').hidden = eventData.type === 'personal'; refreshSelectedEvent(); }
+  else $('#event-detail').textContent = 'Connect to download this event first.';
 }
 function renderEvent() {
   // Keep entered text intact when another member adds an expense.
@@ -195,7 +202,7 @@ function renderEvent() {
       const paid = expenses.filter(([,e]) => e.paidBy === id).reduce((sum,[,e]) => sum + e.amount, 0);
       return `<div class="balance-row"><span>${escapeHTML(member.name)}${id === user.uid ? ' (you)' : ''}${owner ? `<small class="member-account-id">ID: ${escapeHTML(id)}</small>${id !== data.owner ? `<button type="button" class="quiet" data-remove-member="${escapeHTML(id)}">Remove</button>` : ''}` : ''}</span><strong>${money(paid - share(id))}</strong></div>`;
     }).join('')}</div>${owner ? '<form id="member-form"><h3>Add a traveler</h3><button id="repair-access" type="button" class="quiet">Refresh team access</button><label>Name<input name="memberName" required maxlength="80"></label><label>Account ID<input name="memberId" required maxlength="128" pattern="[A-Za-z0-9_-]+"></label><button class="secondary">Add member</button><p class="muted">Use the account ID displayed after the traveler signs in, not their email. Use Refresh team access to restore event listings for existing travelers.</p></form>' : ''}</div></div>
-    <h3 class="table-title">Expense activity</h3><div id="expenses">${expenses.length ? groupedExpenseHTML(expenses, ([id,e]) => `<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${escapeHTML(e.category)} · ${escapeHTML(e.date)} · ${escapeHTML(data.members[e.paidBy]?.name || 'Traveler')}</small></div><div><strong>${money(e.amount)}</strong>${e.paidBy === user.uid || owner ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(id)}">Edit</button><button class="quiet" data-delete="${escapeHTML(id)}" aria-label="Delete ${escapeHTML(e.description)}">Delete</button>` : ''}</div></div>`) : '<p class="muted">No expenses yet. Start with the first coffee.</p>'}</div>`;
+    <h3 class="table-title">Expense activity</h3><div id="expenses">${expenses.length ? groupedExpenseHTML(expenses, ([id,e]) => `<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${e.pending ? '<span class="pending-label">Pending sync · </span>' : ''}${escapeHTML(e.category)} · ${escapeHTML(e.date)} · ${escapeHTML(data.members[e.paidBy]?.name || 'Traveler')}</small></div><div><strong>${money(e.amount)}</strong>${e.paidBy === user.uid || owner ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(id)}">Edit</button><button class="quiet" data-delete="${escapeHTML(id)}" aria-label="Delete ${escapeHTML(e.description)}">Delete</button>` : ''}</div></div>`) : '<p class="muted">No expenses yet. Start with the first coffee.</p>'}</div>`;
   const date = new Date(); date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
   $('#expense-form [name=date]').value = date.toISOString().slice(0,10);
   Object.entries(draft).forEach(([name,value]) => { const input = document.querySelector(`#event-detail [name="${name}"]`); if(input) input.value = value; });
@@ -211,17 +218,18 @@ function renderEvent() {
       const amount = parseExpenseAmount(values.get('amount'));
       const description = values.get('description').trim();
       if (!description || !Number.isSafeInteger(amount) || amount <= 0 || amount > 100000000) throw new Error('Enter a description and an amount between 0.01 and 1,000,000.');
-      await api.set(api.push(api.ref(db, `events/${id}/expenses`)), {
-        description, amount, category: values.get('category'), date: values.get('date'), paidBy: user.uid, createdAt: api.serverTimestamp()
+      await queueExpense(id, {
+        description, amount, category: values.get('category'), date: values.get('date'), paidBy: user.uid, createdAt: Date.now()
       });
-      const current = $('#expense-form'); if (selectedId === id) { current.reset(); current.elements.date.value = date.toISOString().slice(0,10); }
-      status('Expense saved.');
+      const current = $('#expense-form'); if (selectedId === id) { current.reset(); current.elements.date.value = date.toISOString().slice(0,10); refreshSelectedEvent(); }
+      status('Expense saved on this device. Pending changes sync when connected.');
     });
   };
   document.querySelectorAll('[data-remove-member]').forEach(button => button.onclick = () => {
     if (!confirm("Remove this traveler? Their recorded payments will transfer to the organizer and shares will be recalculated.")) return;
     const id = selectedId, uid = button.dataset.removeMember;
     perform($('#event-detail'), async () => {
+      requireOnline('remove a traveler');
       await removeTraveler(api, db, id, user.uid, uid);
       status('Traveler removed; remaining team shares recalculated.');
     });
@@ -231,6 +239,7 @@ function renderEvent() {
     const values = new FormData(form); const uid = values.get('memberId').trim(); const name = values.get('memberName').trim();
     perform(form, async () => {
       if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid) || !name) throw new Error('Enter a valid account ID and traveler name.');
+      requireOnline('add a traveler');
       await addTraveler(api, db, id, user.uid, uid, name);
       if (selectedId === id) $('#member-form').reset(); status('Traveler added.');
     });
@@ -240,6 +249,7 @@ function renderEvent() {
     const id = selectedId;
     const updates = Object.fromEntries(members.map(([uid]) => [`userEvents/${uid}/${id}`, true]));
     perform(button.parentElement, async () => {
+      requireOnline('refresh team access');
       await api.update(api.ref(db), updates);
       status('Team event listings refreshed. Each traveler must sign in with the account ID shown beside their name.');
     });
@@ -247,7 +257,7 @@ function renderEvent() {
   document.querySelectorAll('[data-delete]').forEach((button) => button.onclick = () => {
     if (!confirm('Delete this expense?')) return;
     const id = selectedId;
-    perform($('#expenses'), async () => { await api.remove(api.ref(db, `events/${id}/expenses/${button.dataset.delete}`)); status('Expense deleted.'); });
+    perform($('#expenses'), async () => { requireOnline('delete an expense'); await rejectPendingDelete(id, button.dataset.delete); await api.remove(api.ref(db, `events/${id}/expenses/${button.dataset.delete}`)); status('Expense deleted.'); });
   });
 }
 initialize().catch((error) => {
@@ -267,6 +277,7 @@ function attachEventDelete() {
     const id = selectedId, members = Object.keys(eventData.members);
     perform($('#event-detail'), async () => {
       const updates = Object.fromEntries(members.map(uid => [`userEvents/${uid}/${id}`, null]));
+      requireOnline('delete an event');
       updates[`events/${id}`] = null; await api.update(api.ref(db), updates); status('Event deleted.');
     });
   };
@@ -284,7 +295,7 @@ function renderPersonal() {
     <label>Date / first payment<input name="date" type="date" value="${localDate()}" required></label>
     <label>Repeat<select name="repeat"><option value="once">Once</option><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="fortnightly">Fortnightly</option></select></label>
     <label id="repeat-end" hidden>Last payment date<input name="end" type="date"></label><button>Save expense</button></form>
-    <h3>Expenses for ${escapeHTML(personalMonth)}</h3><div id="personal-expenses">${groupedExpenseHTML(entries, ([key,e])=>`<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${escapeHTML(e.date)} · ${escapeHTML(e.category)}${e.scheduled ? ` · Scheduled ${escapeHTML(e.frequency || 'monthly')}` : ''}</small></div><div>${money(e.amount)} ${!e.scheduled ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(key)}">Edit</button><button class="quiet" data-personal-delete="${escapeHTML(key)}">Delete</button>` : ''}</div></div>`) || '<p class="muted">No expenses this month.</p>'}</div>
+    <h3>Expenses for ${escapeHTML(personalMonth)}</h3><div id="personal-expenses">${groupedExpenseHTML(entries, ([key,e])=>`<div class="expense-row"><div><strong>${escapeHTML(e.description)}</strong><small>${e.pending ? '<span class="pending-label">Pending sync · </span>' : ''}${escapeHTML(e.date)} · ${escapeHTML(e.category)}${e.scheduled ? ` · Scheduled ${escapeHTML(e.frequency || 'monthly')}` : ''}</small></div><div>${money(e.amount)} ${!e.scheduled ? `<button type="button" class="quiet" data-edit-expense="${escapeHTML(key)}">Edit</button><button class="quiet" data-personal-delete="${escapeHTML(key)}">Delete</button>` : ''}</div></div>`) || '<p class="muted">No expenses this month.</p>'}</div>
     <h3>Recurring schedules</h3><p class="muted">Recurring payments cannot be edited. To make a correction, delete the schedule and create a replacement. Deleting removes its amounts from every month, including earlier months.</p>
     ${Object.entries(data.recurring || {}).map(([key,r])=>`<div class="expense-row"><div>${escapeHTML(r.description)}<small>${escapeHTML(r.startDate || r.start)} to ${escapeHTML(r.endDate || r.end)} · ${escapeHTML(r.frequency || 'monthly')} · ${money(r.amount)}</small></div><div><button class="quiet" data-schedule-delete="${escapeHTML(key)}">Delete schedule</button></div></div>`).join('') || '<p class="muted">No recurring schedules.</p>'}`;
   $('#personal-month').onchange = e => { if (/^\d{4}-\d{2}$/.test(e.target.value)) { personalMonth = e.target.value; renderPersonal(); attachEventDelete(); } };
@@ -301,6 +312,7 @@ function renderPersonal() {
     if (!description || !Number.isSafeInteger(amount) || amount <= 0 || amount > 100000000) throw new Error('Enter a valid description and amount.');
     const record = {description, amount, category: values.get('category'), paidBy: user.uid, createdAt: api.serverTimestamp()};
     const repeat = values.get('repeat') !== 'once';
+    if (repeat) requireOnline('create a recurring schedule');
     if (repeat) {
       const end = values.get('end');
       if (!end || end < date) throw new Error('Last payment date must be on or after the first payment.');
@@ -313,13 +325,14 @@ function renderPersonal() {
       } else { record.startDate = date; record.endDate = end; }
     }
     else record.date = date;
-    await api.set(api.push(api.ref(db, `events/${id}/${repeat ? 'recurring' : 'expenses'}`)), record);
+    if (repeat) await api.set(api.push(api.ref(db, `events/${id}/recurring`)), record);
+    else await queueExpense(id, { ...record, createdAt: Date.now() });
     if (selectedId === id && !editing) { $('#personal-form').reset(); refreshSelectedEvent(); }
-    status('Expense saved.');
+    status(repeat ? 'Recurring schedule saved.' : 'Expense saved on this device. Pending changes sync when connected.');
   }); };
   document.querySelectorAll('[data-personal-delete], [data-schedule-delete]').forEach(b => b.onclick = () => {
     if(!confirm(b.dataset.scheduleDelete ? 'Delete this schedule and its amounts from every month?' : 'Delete this expense?')) return;
-    perform($('#event-detail'), async () => { await api.remove(api.ref(db, `events/${id}/${b.dataset.scheduleDelete ? 'recurring/'+b.dataset.scheduleDelete : 'expenses/'+b.dataset.personalDelete}`)); status(b.dataset.scheduleDelete ? 'Recurring schedule deleted.' : 'Expense deleted.'); });
+    perform($('#event-detail'), async () => { requireOnline('delete an expense or schedule'); if (b.dataset.personalDelete) await rejectPendingDelete(id, b.dataset.personalDelete); await api.remove(api.ref(db, `events/${id}/${b.dataset.scheduleDelete ? 'recurring/'+b.dataset.scheduleDelete : 'expenses/'+b.dataset.personalDelete}`)); status(b.dataset.scheduleDelete ? 'Recurring schedule deleted.' : 'Expense deleted.'); });
   });
 }
 
@@ -363,7 +376,7 @@ function refreshSelectedEvent() {
 function configureExpenseEditor(form) {
   if (!editing || editing.eventId !== selectedId) return;
   if (!eventData[editing.collection]?.[editing.key]) {
-    editing = null;
+    editing = null; form.reset();
     status('The expense being edited is no longer available.', 'error');
     return;
   }
@@ -382,7 +395,7 @@ function bindEditButtons() {
     const key = button.dataset.editExpense;
     const record = eventData[collection]?.[key];
     if (!record) { status('This expense is no longer available.', 'error'); return; }
-    editing = { eventId: selectedId, collection, key };
+    editing = { eventId: selectedId, collection, key, baseline: structuredClone(record) };
     refreshSelectedEvent();
     const form = $('#personal-form') || $('#expense-form');
     form.elements.description.value = record.description;
@@ -395,12 +408,128 @@ function bindEditButtons() {
   });
 }
 async function saveExpenseEdit(edit, values) {
-  await editExpenseValues(api, db, edit.eventId, edit.collection, edit.key, parseExpenseAmount(values.get('amount')), values.get('date'));
+  const record = edit.baseline;
+  const amount = parseExpenseAmount(values.get('amount')), date = values.get('date');
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Enter a valid date.');
+  const { pending, ...saved } = record;
+  await offline.queue(user.uid, edit.eventId, edit.key, { ...saved, amount, date }, saved);
+  await refreshClient(false);
+  syncEngine.run();
   if (selectedId === edit.eventId && editing === edit) {
     editing = null;
     const form = $('#personal-form') || $('#expense-form');
     form.reset();
     refreshSelectedEvent();
   }
-  status('Expense updated.');
+  status('Expense changes saved on this device. They will sync when connected.');
 }
+
+
+// Account-scoped offline state. Never restore one user's events into another session.
+async function loadSession(nextUser) {
+  const version = ++sessionVersion;
+  stopIndex(); stopEvent(); eventListeners.forEach(off => off()); eventListeners = [];
+  selectedId = null; eventData = null; editing = null; eventCache = {}; user = nextUser;
+  syncState = 'offline'; syncError = '';
+  $('.account-id').hidden = false;
+  $('#auth-panel').hidden = !!user; $('#app').hidden = !user; $('#account').hidden = !user;
+  $('#event-list').replaceChildren(); $('#sync-issues').replaceChildren(); $('#sync-issues').hidden = true;
+  $('#event-detail').innerHTML = '<div class="empty"><h2>Select an event to get started</h2><p>Cached events are available offline after the first download.</p></div>';
+  if (!user) { if (!navigator.onLine) status('Connect to sign in. First setup requires an internet connection.', 'error'); return; }
+  const uid = user.uid;
+  $('#identity').textContent = user.email; $('#uid').textContent = uid;
+  await refreshClient();
+  if (version !== sessionVersion) return;
+  stopIndex = api.onValue(api.ref(db, `userEvents/${uid}`), async snapshot => {
+    if (version !== sessionVersion) return;
+    eventListeners.forEach(off => off()); eventListeners = [];
+    for (const id of Object.keys(snapshot.val() || {})) {
+      eventListeners.push(api.onValue(api.ref(db, `events/${id}`), snapshot => {
+        if (version !== sessionVersion) return;
+        const persist = snapshot.exists() ? offline.saveEvent(uid, id, snapshot.val()) : offline.removeEvent(uid, id);
+        persist.then(() => refreshClient()).catch(error => status(error.message, 'error'));
+      }, error => {
+        if (version !== sessionVersion) return;
+        offline.removeEvent(uid, id).then(() => refreshClient()).catch(error => status(error.message, 'error'));
+        status('An event is no longer accessible. Pending changes remain on this device for review.', 'error');
+      }));
+    }
+    syncEngine.run();
+  }, error => { if (version === sessionVersion) status(error.message, 'error'); });
+  if (navigator.onLine && serverConnected) syncEngine.run();
+}
+async function refreshClient(renderDetail = true) {
+  if (!user) return;
+  const uid = user.uid, version = ++viewVersion;
+  const events = await offline.events(uid);
+  if (uid !== user?.uid || version !== viewVersion) return;
+  eventCache = events;
+  renderEventList();
+  if (selectedId) {
+    eventData = eventCache[selectedId];
+    if (eventData && renderDetail) refreshSelectedEvent();
+    else if (!eventData) { editing = null; $('#event-detail').textContent = 'This event is no longer available. Connect to check your access.'; }
+  }
+  await renderSyncPanel();
+}
+function requireOnline(action) {
+  if (!navigator.onLine || !serverConnected) throw new Error(`Connect to the internet to ${action}. One-off expenses can be added and edited offline.`);
+}
+async function queueExpense(eventId, record) {
+  const expenseId = api.push(api.ref(db, `events/${eventId}/expenses`)).key;
+  await offline.queue(user.uid, eventId, expenseId, record);
+  navigator.storage?.persist?.().catch(() => {});
+  await refreshClient(false);
+  syncEngine.run();
+}
+async function rejectPendingDelete(eventId, expenseId) {
+  if ((await offline.changes(user.uid)).some(change => change.eventId === eventId && change.expenseId === expenseId)) throw new Error('Sync or resolve this expense’s pending changes before deleting it.');
+}
+async function renderSyncPanel() {
+  if (!user) return;
+  const uid = user.uid;
+  const [changes, account] = await Promise.all([offline.changes(uid), offline.account(uid)]);
+  if (uid !== user?.uid) return;
+  const connected = navigator.onLine && serverConnected;
+  const state = !connected ? 'Offline' : syncState === 'syncing' ? 'Syncing…' : syncState === 'failed' ? 'Sync failed' : changes.some(c => c.state !== 'pending') ? 'Needs attention' : changes.length ? 'Changes pending' : account?.lastSynced ? 'Synced' : 'Ready to sync';
+  $('#sync-state').textContent = state;
+  $('#sync-toolbar').dataset.state = connected ? syncState : 'offline';
+  $('#sync-now').disabled = !connected || syncState === 'syncing';
+  $('#sync-detail').textContent = `${changes.length} pending change${changes.length === 1 ? '' : 's'}. ${account?.lastSynced ? 'Last sync: ' + new Date(account.lastSynced).toLocaleString() : 'Connect to download your events.'}${syncError ? ' ' + syncError : ''}`;
+  const issues = $('#sync-issues'); issues.replaceChildren();
+  for (const change of changes.filter(c => c.state !== 'pending' || c.error)) {
+    const row = document.createElement('div'); row.className = 'sync-issue';
+    const text = document.createElement('p');
+    text.textContent = `${change.record.description}: ${change.error || 'Review this pending change.'}`;
+    row.append(text);
+    if (change.state === 'conflict' && change.remote) {
+      const compare = document.createElement('p'); compare.className = 'muted';
+      compare.textContent = `Your change: ${(change.record.amount/100).toFixed(2)} on ${change.record.date}. Server: ${(change.remote.amount/100).toFixed(2)} on ${change.remote.date}.`;
+      row.append(compare);
+    }
+    const discard = document.createElement('button'); discard.type = 'button'; discard.className = 'quiet';
+    discard.textContent = change.state === 'conflict' ? 'Use server version' : 'Discard local change';
+    discard.onclick = () => perform(row, async () => { if (!confirm('Discard this unsynced change?')) return; await offline.resolve(change, false); await refreshClient(); syncEngine.run(); });
+    row.append(discard);
+    if (change.state === 'conflict' && change.remote && change.kind === 'edit') {
+      const keep = document.createElement('button'); keep.type = 'button'; keep.className = 'secondary'; keep.textContent = 'Apply my amount and date';
+      keep.onclick = () => perform(row, async () => { await offline.resolve(change, true); await refreshClient(); syncEngine.run(); });
+      row.append(keep);
+    }
+    issues.append(row);
+  }
+  issues.hidden = !issues.children.length;
+}
+$('#sync-now').onclick = () => syncEngine?.run();
+window.addEventListener('offline', () => { renderSyncPanel().catch(error => status(error.message, 'error')); });
+window.addEventListener('online', () => { syncEngine?.run(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && user) syncEngine?.run(); });
+document.addEventListener('offline-shell-ready', () => { $('#offline-ready').textContent = 'Ready for offline use after your events finish syncing.'; });
+if (navigator.serviceWorker?.controller) $('#offline-ready').textContent = 'Ready for offline use after your events finish syncing.';
+
+setInterval(() => {
+  if (!document.hidden && user && navigator.onLine && serverConnected) {
+    const uid = user.uid;
+    offline.changes(uid).then(changes => { if (user?.uid === uid && changes.some(change => change.state === 'pending')) syncEngine?.run(); }).catch(error => status(error.message, 'error'));
+  }
+}, 30000);
