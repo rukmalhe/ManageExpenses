@@ -5,7 +5,7 @@ async function worker() {
   const listeners = {}, cache = { addAll:vi.fn(async()=>{}), match:vi.fn(async()=>new Response('cached shell')), put:vi.fn() };
   const caches = { open:vi.fn(async()=>cache), keys:vi.fn(async()=>['roam-shell-old','another-app-cache']), delete:vi.fn() };
   const self = { location:{origin:'https://expenses.example'}, addEventListener:(type,handler)=>listeners[type]=handler, clients:{claim:vi.fn()}, skipWaiting:vi.fn() };
-  vm.runInNewContext(await readFile('service-worker.js','utf8'), { self,caches,URL,fetch:vi.fn() });
+  vm.runInNewContext(await readFile('service-worker.js','utf8'), { self,caches,URL,Response,AbortSignal,fetch:vi.fn(async()=>{ throw new Error("Offline"); }) });
   return { listeners,cache,caches,self };
 }
 it('preloads the app, IndexedDB library, and Firebase SDK before installation completes', async()=>{

@@ -71,3 +71,5 @@ Offline availability depends on browser storage remaining available; clearing si
 Run `npm test` for storage, queue, conflict, access-rule, and existing application regressions. For isolated mobile browser tests, run `npx playwright install chromium webkit`, build `dist/`, then `npm run test:browser`. The browser fixture serves synthetic authentication and a local test database; it does not connect to live Firebase. The test runner is pinned for compatibility with this Mac's supported WebKit runtime.
 
 Browser-test note: WebKit’s Playwright offline toggle bypasses service-worker responses. WebKit offline-navigation tests therefore make the local fixture server unavailable and expose disconnected state to its synthetic SDK. Chromium uses the browser’s native offline toggle. Neither replaces a final installation check on a physical iPhone.
+
+Builds use a shared release identifier in static-asset URLs to avoid mixing versions in the CDN cache. Online navigation checks the latest HTML; disconnected navigation falls back to the last completely installed app shell.

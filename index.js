@@ -100,7 +100,12 @@ async function initialize() {
     renderSyncPanel().catch(error => status(error.message, 'error'));
     if (serverConnected && user) syncEngine.run();
   });
-  api.onAuthStateChanged(auth, nextUser => loadSession(nextUser).catch(error => status(`Local storage is unavailable: ${error.message}. Allow website storage and reload.`, 'error')));
+  api.onAuthStateChanged(auth, nextUser => loadSession(nextUser).catch(error => {
+    syncState = 'failed'; syncError = error.message;
+    $('#sync-state').textContent = 'Local storage unavailable';
+    $('#sync-detail').textContent = 'Allow website storage and reload to finish offline setup.';
+    status(`Local storage is unavailable: ${error.message}. Allow website storage and reload.`, 'error');
+  }));
 
 }
 
@@ -437,6 +442,13 @@ async function loadSession(nextUser) {
   $('#event-detail').innerHTML = '<div class="empty"><h2>Select an event to get started</h2><p>Cached events are available offline after the first download.</p></div>';
   if (!user) { if (!navigator.onLine) status('Connect to sign in. First setup requires an internet connection.', 'error'); return; }
   const uid = user.uid;
+  $('#sync-state').textContent = 'Loading saved events…';
+  $('#sync-detail').textContent = 'Checking device storage…';
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Device storage did not respond. Close other app tabs and reload.')), 10000);
+    offline.db.open().then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+  if (version !== sessionVersion) return;
   $('#identity').textContent = user.email; $('#uid').textContent = uid;
   await refreshClient();
   if (version !== sessionVersion) return;
@@ -525,7 +537,7 @@ window.addEventListener('offline', () => { renderSyncPanel().catch(error => stat
 window.addEventListener('online', () => { syncEngine?.run(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && user) syncEngine?.run(); });
 document.addEventListener('offline-shell-ready', () => { $('#offline-ready').textContent = 'Ready for offline use after your events finish syncing.'; });
-if (navigator.serviceWorker?.controller) $('#offline-ready').textContent = 'Ready for offline use after your events finish syncing.';
+if ('serviceWorker' in navigator) navigator.serviceWorker.ready.then(() => { $('#offline-ready').textContent = 'Ready for offline use after your events finish syncing.'; });
 
 setInterval(() => {
   if (!document.hidden && user && navigator.onLine && serverConnected) {

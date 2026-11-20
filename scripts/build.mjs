@@ -37,4 +37,23 @@ const files = ['index.html','styles.css','index.js','bootstrap.js','event-action
 const worker = await readFile(resolve(root, 'service-worker.js'), 'utf8');
 const hash = createHash('sha256').update(worker);
 for (const file of files) hash.update(await readFile(resolve(output, file)));
-await writeFile(resolve(output, 'service-worker.js'), worker.replace('__BUILD_VERSION__', hash.digest('hex').slice(0,16)));
+const revision = hash.digest('hex').slice(0,16);
+// The edge caches static assets, so use release-specific URLs consistently in
+// HTML, module imports, the manifest, and the service worker's precache list.
+const versioned = ['styles.css','bootstrap.js','index.js','event-actions.js','expense-utils.js','offline-store.js','sync-engine.js','firebase-config.js','vendor/dexie.mjs','icons/icon-180.png','icons/icon-192.png','icons/icon-512.png'];
+for (const file of ['index.html','bootstrap.js','index.js','offline-store.js']) {
+  let content = await readFile(resolve(output, file), 'utf8');
+  for (const asset of versioned) {
+    content = content.replaceAll(`"${asset}"`, `"${asset}?v=${revision}"`)
+      .replaceAll(`'./${asset}'`, `'./${asset}?v=${revision}'`)
+      .replaceAll(`"./${asset}"`, `"./${asset}?v=${revision}"`);
+  }
+  content = content.replaceAll("'./service-worker.js'", `'./service-worker.js?v=${revision}'`);
+  await writeFile(resolve(output, file), content);
+}
+const manifest = JSON.parse(await readFile(resolve(output, 'manifest.webmanifest'), 'utf8'));
+manifest.icons.forEach(icon => { icon.src += `?v=${revision}`; });
+await writeFile(resolve(output, 'manifest.webmanifest'), JSON.stringify(manifest, null, 2)+'\n');
+let builtWorker = worker.replace('__BUILD_VERSION__', revision);
+for (const asset of versioned) builtWorker = builtWorker.replaceAll(`'/${asset}'`, `'/${asset}?v=${revision}'`);
+await writeFile(resolve(output, 'service-worker.js'), builtWorker);

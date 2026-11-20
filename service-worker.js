@@ -15,10 +15,18 @@ self.addEventListener('fetch', event => {
   const local = url.origin === self.location.origin;
   const navigation = local && event.request.mode === 'navigate' && ['/', '/index.html'].includes(url.pathname);
   // Never cache authentication requests or database responses in Cache Storage.
-  if (!(local && (FILES.includes(url.pathname) || navigation)) && !url.href.startsWith(SDK)) return;
+  if (!(local && (FILES.some(file => new URL(file, self.location.origin).pathname === url.pathname) || navigation)) && !url.href.startsWith(SDK)) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
-    if (navigation) return (await cache.match('/index.html')) || fetch(event.request);
+    if (navigation) {
+      // Online navigation discovers new HTML and its versioned asset URLs.
+      // Keep the installed shell intact until the next complete cache activates.
+      try {
+        const fresh = await fetch(event.request, { signal: AbortSignal.timeout(5000) });
+        if (fresh.ok) return fresh;
+      } catch {}
+      return (await cache.match('/index.html')) || Response.error();
+    }
     const cached = await cache.match(event.request);
     if (cached) return cached;
     const response = await fetch(event.request);
