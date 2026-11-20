@@ -88,7 +88,7 @@ async function initialize() {
       return auth.currentUser?.uid === uid ? token : null;
     } }),
     getUid: () => user?.uid,
-    isOnline: () => navigator.onLine && serverConnected,
+    isOnline: () => navigator.onLine,
     onChange: (state, message) => {
       if (syncEngine?.activeUid !== user?.uid) return;
       if (state !== 'refresh') { syncState = state; syncError = message || ''; }
@@ -468,7 +468,7 @@ async function loadSession(nextUser) {
     }
     syncEngine.run();
   }, error => { if (version === sessionVersion) status(error.message, 'error'); });
-  if (navigator.onLine && serverConnected) syncEngine.run();
+  if (navigator.onLine) syncEngine.run();
 }
 async function refreshClient(renderDetail = true) {
   if (!user) return;
@@ -485,7 +485,8 @@ async function refreshClient(renderDetail = true) {
   await renderSyncPanel();
 }
 function requireOnline(action) {
-  if (!navigator.onLine || !serverConnected) throw new Error(`Connect to the internet to ${action}. One-off expenses can be added and edited offline.`);
+  if (!navigator.onLine) throw new Error(`Connect to the internet to ${action}. One-off expenses can be added and edited offline.`);
+  if (!serverConnected) throw new Error('The live connection is reconnecting. You can still sync, add, and edit one-off expenses. Retry this action shortly.');
 }
 async function queueExpense(eventId, record) {
   const expenseId = api.push(api.ref(db, `events/${eventId}/expenses`)).key;
@@ -502,7 +503,7 @@ async function renderSyncPanel() {
   const uid = user.uid;
   const [changes, account] = await Promise.all([offline.changes(uid), offline.account(uid)]);
   if (uid !== user?.uid) return;
-  const connected = navigator.onLine && serverConnected;
+  const connected = navigator.onLine;
   const state = !connected ? 'Offline' : syncState === 'syncing' ? 'Syncing…' : syncState === 'failed' ? 'Sync failed' : changes.some(c => c.state !== 'pending') ? 'Needs attention' : changes.length ? 'Changes pending' : account?.lastSynced ? 'Synced' : 'Ready to sync';
   $('#sync-state').textContent = state;
   $('#sync-toolbar').dataset.state = connected ? syncState : 'offline';
@@ -540,8 +541,8 @@ document.addEventListener('offline-shell-ready', () => { $('#offline-ready').tex
 if ('serviceWorker' in navigator) navigator.serviceWorker.ready.then(() => { $('#offline-ready').textContent = 'Ready for offline use after your events finish syncing.'; });
 
 setInterval(() => {
-  if (!document.hidden && user && navigator.onLine && serverConnected) {
+  if (!document.hidden && user && navigator.onLine) {
     const uid = user.uid;
-    offline.changes(uid).then(changes => { if (user?.uid === uid && changes.some(change => change.state === 'pending')) syncEngine?.run(); }).catch(error => status(error.message, 'error'));
+    offline.changes(uid).then(changes => { if (user?.uid === uid && (!serverConnected || changes.some(change => change.state === 'pending'))) syncEngine?.run(); }).catch(error => status(error.message, 'error'));
   }
 }, 30000);

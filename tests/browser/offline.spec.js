@@ -117,3 +117,17 @@ test('keeps a revoked event’s pending changes for review and removes its cache
   const data=await (await request.get('/test-control')).json();
   expect(Object.values(data.trip.expenses).filter(e=>e.description==='Unsynced meal')).toHaveLength(0);
 });
+
+
+test('sync stays available when the live socket is disconnected but internet requests work', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('fixture-live-disconnected','yes'));
+  await page.reload();
+  await expect(page.locator('#sync-state')).toHaveText('Synced');
+  await expect(page.locator('#sync-now')).toBeEnabled();
+  await page.locator('#event-list button').filter({hasText:'Shared test trip'}).click();
+  await page.locator('#expense-form [name="description"]').fill('Socket-independent sync');
+  await page.locator('#expense-form [name="amount"]').fill('12.34');
+  await page.locator('#expense-form button').filter({hasText:'Add expense'}).click();
+  await expect(page.locator('#sync-detail')).toContainText('0 pending changes');
+  await expect(page.locator('#sync-state')).toHaveText('Synced');
+});

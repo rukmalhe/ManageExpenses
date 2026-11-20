@@ -36,7 +36,7 @@ export const onValue = (reference, cb, fail) => {
   let closed=false;
   const emit = async () => {
     if (closed) return;
-    if (reference.path === '.info/connected') { cb({ val: () => navigator.onLine }); return; }
+    if (reference.path === '.info/connected') { cb({ val: () => navigator.onLine && localStorage.getItem('fixture-live-disconnected') !== 'yes' }); return; }
     if (!navigator.onLine) return;
     try {
       const response = await fetch('/test-db/'+reference.path+'.json?auth=test-'+(localStorage.getItem('fixture-account') || 'owner'));

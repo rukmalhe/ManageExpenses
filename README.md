@@ -73,3 +73,5 @@ Run `npm test` for storage, queue, conflict, access-rule, and existing applicati
 Browser-test note: WebKit’s Playwright offline toggle bypasses service-worker responses. WebKit offline-navigation tests therefore make the local fixture server unavailable and expose disconnected state to its synthetic SDK. Chromium uses the browser’s native offline toggle. Neither replaces a final installation check on a physical iPhone.
 
 Builds use a shared release identifier in static-asset URLs to avoid mixing versions in the CDN cache. Online navigation checks the latest HTML; disconnected navigation falls back to the last completely installed app shell.
+
+The Offline label follows the device network state, not Firebase’s live socket. Manual and automatic REST synchronization continue when the live connection is reconnecting; the app polls for server changes while that live connection is unavailable. Management actions still wait for a live connection.
