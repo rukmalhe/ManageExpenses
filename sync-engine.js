@@ -20,6 +20,22 @@ export class FirebaseTransport {
   }
   async eventIds(uid) { return (await (await this.request(`userEvents/${uid}`, {}, uid)).json()) || {}; }
   async event(id, uid) { return (await (await this.request(`events/${id}`, {}, uid)).json()); }
+  async createEvent(uid, id, { ownerName, ...details }) {
+    const path = `events/${id}`;
+    const record = { ...details, owner: uid, createdAt: { '.sv': 'timestamp' }, members: { [uid]: { name: ownerName } } };
+    const put = body => ({ method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let saved;
+    try {
+      saved = await this.event(id, uid);
+    } catch (error) {
+      // Firebase denies reads on missing events because there is no member yet.
+      if (error.kind !== 'blocked') throw error;
+    }
+    // If the prior write succeeded, finish indexing without replacing the event.
+    saved ??= await (await this.request(path, put(record), uid)).json();
+    await this.request(`userEvents/${uid}/${id}`, put(true), uid);
+    return saved;
+  }
   async remove({ uid, eventId, collection, key, baseline, record }) {
     if (!['expenses', 'recurring'].includes(collection)) throw new Error('Invalid record type.');
     const path = `events/${eventId}/${collection}/${key}`;

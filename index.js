@@ -1,7 +1,7 @@
 import { OfflineStore } from './offline-store.js';
 import { FirebaseTransport, SyncEngine } from './sync-engine.js';
 import { monthlyEntries, groupExpenses, parseExpenseAmount, expenditureThroughDate } from './expense-utils.js';
-import { createEvent, removeTraveler, addTraveler, visibleEvents } from './event-actions.js';
+import { removeTraveler, addTraveler, visibleEvents } from './event-actions.js';
 // Firebase web configuration. These identify the project; database rules control access.
 import { firebaseConfig } from './firebase-config.js';
 
@@ -181,18 +181,37 @@ function updateEventTypeHelp() {
 $('#event-form').elements.type.onchange = updateEventTypeHelp;
 $('#new-event').onclick = () => { updateEventTypeHelp(); $('#event-dialog').showModal(); };
 $('[data-close]').onclick = () => $('#event-dialog').close();
+let eventCreation;
 $('#event-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   perform(form, async () => {
-    requireOnline('create an event');
+    if (!navigator.onLine) throw new Error('Connect to the internet to create an event.');
     const values = new FormData(form);
     const name = values.get('name').trim();
     const categories = [...new Set(values.get('categories').split(',').map((c) => c.trim()).filter(Boolean))];
     if (!name || !categories.length || categories.length > 20 || categories.some((c) => c.length > 40)) throw new Error('Enter a name and 1–20 categories of up to 40 characters.');
     const type = values.get('type');
-    const eventId = await createEvent(api, db, user.uid, { name, type: values.get('type'), currency: values.get('currency'), categories, ownerName: user.email });
+    const uid = user.uid, version = sessionVersion;
+    const details = { name, type, currency: values.get('currency'), categories, ownerName: user.email };
+    const signature = JSON.stringify([uid, details]);
+    if (eventCreation?.signature !== signature) {
+      eventCreation = { signature, id: api.push(api.ref(db, 'events')).key };
+    }
+    const eventId = eventCreation.id;
+    let saved;
+    try {
+      saved = await syncEngine.transport.createEvent(uid, eventId, details);
+    } catch {
+      throw new Error('Could not confirm event creation. Check your connection and retry.');
+    }
+    eventCreation = null;
+    if (version !== sessionVersion) return;
     $('#event-dialog').close(); form.reset();
+    syncEngine.run();
+    await offline.saveEvent(uid, eventId, saved);
+    if (version !== sessionVersion) return;
+    eventCache[eventId] = saved;
     $('#'+(type === 'personal' ? 'personal' : 'active')+'-events').click(); selectEvent(eventId);
     status(type === 'personal' ? 'Personal event created. Only you can access these expenses.' : 'Event created. Add travelers using their account IDs.');
   });

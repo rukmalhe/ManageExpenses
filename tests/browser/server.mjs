@@ -6,10 +6,11 @@ import { resolve, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 const origin = 'http://127.0.0.1:8766';
 const csp = (await readFile('deploy/Caddyfile.app','utf8')).match(/Content-Security-Policy "([^"]+)"/)[1];
-let events, revoked, offlineMode, uploadHold, releaseUpload, uploadWaiting;
+let events, eventIndex, revoked, offlineMode, uploadHold, releaseUpload, uploadWaiting;
 const seed = () => {
   releaseUpload?.(); uploadHold=null; releaseUpload=null; uploadWaiting=false;
   revoked = false; offlineMode = false;
+  eventIndex = { trip: true, personal: true };
   events = {
     trip: { name: 'Shared test trip', type: 'shared', owner: 'owner', currency: 'NZD', createdAt: Date.now(), categories: ['Food'], members: { owner: { name: 'Owner' } }, expenses: { meal: { description: 'Dinner', category: 'Food', amount: 100, date: '2026-11-20', paidBy: 'owner', createdAt: 1 } } },
     personal: { name: 'Personal test event', type: 'personal', owner: 'owner', currency: 'NZD', createdAt: Date.now(), categories: ['Food'], members: { owner: { name: 'Owner' } } }
@@ -77,10 +78,26 @@ const server = http.createServer(async (request, response) => {
     if (url.pathname.startsWith('/test-db/')) {
       const path=url.pathname.slice(9).replace(/\.json$/,'').split('/');
       const uid=url.searchParams.get('auth')?.replace('test-','');
-      if (path[0] === 'userEvents') { json(uid === 'owner' && !revoked ? { trip:true, personal:true } : {}); return; }
+      if (path[0] === 'userEvents') {
+        if (request.method === 'PUT' && uid === 'owner' && path[1] === uid && events[path[2]]?.owner === uid) {
+          eventIndex[path[2]] = JSON.parse(body);
+          json(eventIndex[path[2]]); return;
+        }
+        json(uid === 'owner' && !revoked ? eventIndex : {}); return;
+      }
       if (uid !== 'owner' || revoked) { json({ error:'Permission denied' },401); return; }
       const event=events[path[1]];
-      if (path.length === 2) { json(event || null); return; }
+      if (path.length === 2) {
+        if (request.method === 'PUT') {
+          if (event) { json({ error:'Already exists' },400); return; }
+          const value = JSON.parse(body);
+          value.createdAt = Date.now();
+          events[path[1]] = value;
+          json(value); return;
+        }
+        if (!event) { json({ error:'Permission denied' },401); return; }
+        json(event); return;
+      }
       if (!['expenses','recurring'].includes(path[2])) { json(null); return; }
       const records=event[path[2]] ||= {};
       const current=records[path[3]] || null;

@@ -23,6 +23,26 @@ test.beforeEach(async ({ request, page, context }) => {
   await expect(page.locator('#offline-ready')).toContainText('Ready for offline use');
 });
 
+for (const type of ['shared', 'personal']) {
+  test(`creates a ${type} event while the live connection is reconnecting`, async ({ page }) => {
+    await page.evaluate(() => {
+      localStorage.setItem('fixture-live-disconnected', 'yes');
+      window.dispatchEvent(new Event('online'));
+    });
+    await page.locator('#new-event').click();
+    await page.locator('#event-form [name="type"]').selectOption(type);
+    await page.locator('#event-form [name="name"]').fill('New expense event');
+    await page.getByRole('button', { name: 'Create event', exact: true }).click();
+    await expect(page.locator('#event-dialog')).toBeHidden();
+    await expect(page.locator('#event-detail')).toBeVisible();
+    await expect(page.locator('#event-list')).toContainText('New expense event');
+    await page.reload();
+    await expect(page.locator('#sync-state')).toHaveText('Synced');
+    await page.locator(type === 'personal' ? '#personal-events' : '#active-events').click();
+    await expect(page.locator('#event-list')).toContainText('New expense event');
+  });
+}
+
 test('installs the offline shell, survives an offline reload, and uploads an expense exactly once', async ({ page, context, request }) => {
   await expect(page.locator('body')).toHaveJSProperty('scrollWidth', await page.evaluate(() => innerWidth));
   await page.locator('#event-list button').filter({ hasText:'Shared test trip' }).click();

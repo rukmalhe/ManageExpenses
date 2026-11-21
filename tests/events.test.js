@@ -160,6 +160,14 @@ describe('editing saved expenses', () => {
 
 describe('offline queue writes against real Firebase rules', () => {
   const transportFor = uid => new FirebaseTransport({ databaseURL: 'http://127.0.0.1:9000?ns=demo-roam', getToken: async () => createMockUserToken({ sub: uid }, 'demo-roam') });
+  it.each(['shared', 'personal'])('creates and indexes a %s event through HTTPS and safely retries', async type => {
+    const transport = transportFor('owner');
+    const id = `rest-${type}`;
+    const saved = await transport.createEvent('owner', id, { ...details, type });
+    expect(saved).toMatchObject({ type, owner: 'owner', createdAt: expect.any(Number) });
+    expect(await transport.eventIds('owner')).toMatchObject({ [id]: true });
+    expect(await transport.createEvent('owner', id, { ...details, type })).toEqual(saved);
+  });
   it('uses stable conditional creates and edits without duplicate writes', async () => {
     const db = env.authenticatedContext('owner').database();
     const eventId = await createEvent(api, db, 'owner', details);
